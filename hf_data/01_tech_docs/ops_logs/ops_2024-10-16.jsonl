@@ -1,0 +1,10 @@
+{"ts":"2024-10-16T00:01:00+08:00","level":"INFO","source":"CICS-CPSP001","msg":"Midnight stats reset"}
+{"ts":"2024-10-16T08:15:33+08:00","level":"INFO","source":"CHANGE","change_id":"CHG-2024-10442","msg":"Deploy window opened for PYROUTE V3.2.1"}
+{"ts":"2024-10-16T08:22:10+08:00","level":"INFO","source":"CICS","msg":"CEMT SET PROGRAM(PYROUTE) NEWCOPY OK"}
+{"ts":"2024-10-16T08:25:00+08:00","level":"INFO","source":"SMOKE","msg":"3 MT103 smoke tests SETTLED"}
+{"ts":"2024-10-16T08:30:00+08:00","level":"INFO","source":"CHANGE","change_id":"CHG-2024-10442","msg":"Deploy completed, channel reopened"}
+{"ts":"2024-10-16T11:02:44+08:00","level":"ERROR","source":"MQ-CPSQM","queue":"CPS.DLQ","msg":"Message put to DLQ","reason":"MQRC_FORMAT_ERROR","txn_id":"CPS20241016000412"}
+{"ts":"2024-10-16T11:03:01+08:00","level":"INFO","source":"TICKET","ticket_id":"INC-88421","msg":"Auto-created from DLQ alert"}
+{"ts":"2024-10-16T15:40:18+08:00","level":"INFO","source":"METRICS","metric":"p99_latency_ms","value":640}
+{"ts":"2024-10-16T16:10:55+08:00","level":"WARN","source":"NOSTRO","currency":"EUR","msg":"Available below warning threshold","available":2100000.00,"threshold":2500000.00}
+{"ts":"2024-10-16T20:00:00+08:00","level":"INFO","source":"BATCH","job":"PYFXRATE#","msg":"FX rate table refreshed","rows":186}

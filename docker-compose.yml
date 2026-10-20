@@ -1,0 +1,78 @@
+version: "3.8"
+
+# 全套存储组件（可选）：本机无 Docker 时后端自动使用内嵌回退，无需启动本文件。
+# 启动：docker compose up -d
+# 然后在 backend/.env 中取消对应连接配置的注释并重启后端。
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: kb-postgres
+    environment:
+      POSTGRES_USER: kb
+      POSTGRES_PASSWORD: kb
+      POSTGRES_DB: kb
+    ports:
+      - "5432:5432"
+    volumes:
+      - kb_pg:/var/lib/postgresql/data
+
+  neo4j:
+    image: neo4j:5
+    container_name: kb-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/kbpass
+    ports:
+      - "7474:7474"   # 浏览器 http://localhost:7474
+      - "7687:7687"   # bolt
+    volumes:
+      - kb_neo4j:/data
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.14
+    container_name: kb-etcd
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    volumes:
+      - kb_etcd:/etcd
+
+  minio:
+    image: minio/minio:latest
+    container_name: kb-minio
+    environment:
+      MINIO_ACCESS_KEY: kbminioadmin
+      MINIO_SECRET_KEY: kbminioadmin
+    command: server /data
+    ports:
+      - "9000:9000"
+      - "9001:9001"   # 控制台
+    volumes:
+      - kb_minio:/data
+
+  milvus:
+    image: milvusdb/milvus:v2.4.17
+    container_name: kb-milvus
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: kbminioadmin
+      MINIO_SECRET_ACCESS_KEY: kbminioadmin
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    depends_on:
+      - etcd
+      - minio
+    volumes:
+      - kb_milvus:/var/lib/milvus
+
+volumes:
+  kb_pg:
+  kb_neo4j:
+  kb_etcd:
+  kb_minio:
+  kb_milvus:

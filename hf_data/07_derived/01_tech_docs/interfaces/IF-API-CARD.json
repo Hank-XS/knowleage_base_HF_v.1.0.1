@@ -1,0 +1,63 @@
+{
+  "doc_id": "IF-API-CARD-001",
+  "base": "https://carddemo.test/api/v1",
+  "mapped_from_cics": [
+    {
+      "method": "PUT",
+      "path": "/accounts/{acctId}",
+      "cics_program": "COACTUPC",
+      "note": "账户更新，源码约 3860 行输入校验"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{acctId}",
+      "cics_program": "COACTVWC"
+    },
+    {
+      "method": "PUT",
+      "path": "/cards/{cardNum}",
+      "cics_program": "COCRDUPC"
+    },
+    {
+      "method": "GET",
+      "path": "/cards",
+      "cics_program": "COCRDLIC"
+    },
+    {
+      "method": "POST",
+      "path": "/transactions",
+      "cics_program": "COTRN02C",
+      "calls": ["CSUTLDTC"],
+      "body": {
+        "tran_type_cd": "01",
+        "tran_amt": 88.5,
+        "card_num": "4111111111111111",
+        "merchant_id": "MID0001"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/billpay",
+      "cics_tran": "CB00",
+      "cics_program": "COBIL00C",
+      "vsam": "TRANSACT",
+      "xctl_back": "menu"
+    },
+    {
+      "method": "POST",
+      "path": "/wires",
+      "program": "WIREXFR0",
+      "function": "SEND",
+      "rules": {
+        "ofac": "OFACCHK0",
+        "dual_control_if_amount_gt": 50000
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/zbank/transfer",
+      "program": "ZBNKBANK",
+      "subprograms": ["ZBNKAUTH", "ZBNKTXN"]
+    }
+  ]
+}

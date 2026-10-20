@@ -1,0 +1,102 @@
+*=====================================================================*
+* MQSC: cps_queues.mqsc                                                *
+* QMGR : CPSQM.PROD                                                    *
+* Doc  : IF-MQ-CPS-001 V2.4.0                                          *
+* NOTE : Run: runmqsc CPSQM.PROD < cps_queues.mqsc                     *
+*=====================================================================*
+
+DEFINE QLOCAL('CPS.IN.Q') REPLACE +
+       DESCR('CPS inbound payment instructions') +
+       MAXDEPTH(50000) MAXMSGL(1048576) +
+       DEFPSIST(YES) DEFPRTY(5) +
+       TRIGGER TRIGTYPE(FIRST) TRIGDPTH(1) +
+       INITQ('CPS.INIT.Q') PROCESS('CPS.PYIN.PROCESS') +
+       BOTHRESH(3) BOQNAME('CPS.DLQ') +
+       QDEPTHHI(8000) QDPHIEV(ENABLED) +
+       QDEPTHLO(1000) QDPLOEV(ENABLED) +
+       MSGDLVSQ(PRIORITY)
+
+DEFINE QLOCAL('CPS.OUT.Q') REPLACE +
+       DESCR('CPS outbound clearing messages') +
+       MAXDEPTH(50000) MAXMSGL(1048576) +
+       DEFPSIST(YES) DEFPRTY(5) +
+       BOTHRESH(5) BOQNAME('CPS.DLQ') +
+       QDEPTHHI(8000) QDPHIEV(ENABLED)
+
+DEFINE QLOCAL('CPS.REPLY.Q') REPLACE +
+       DESCR('Synchronous reply queue') +
+       MAXDEPTH(20000) DEFPSIST(NO) +
+       MSGDLVSQ(FIFO) GET(ENABLED) PUT(ENABLED)
+
+DEFINE QLOCAL('CPS.DLQ') REPLACE +
+       DESCR('CPS dead letter queue') +
+       MAXDEPTH(10000) DEFPSIST(YES) +
+       QDEPTHHI(10) QDPHIEV(ENABLED) +
+       USAGE(NORMAL)
+
+DEFINE QLOCAL('CPS.INIT.Q') REPLACE +
+       DESCR('Trigger initiation queue') +
+       MAXDEPTH(1000) USAGE(XMITQ)
+
+DEFINE QLOCAL('CPS.RECON.Q') REPLACE +
+       DESCR('EOD recon trigger') +
+       MAXDEPTH(10000) DEFPSIST(YES) +
+       TRIGGER TRIGTYPE(NONE)
+
+DEFINE QREMOTE('AML.SCR.Q') REPLACE +
+       DESCR('AML screening request remote') +
+       RNAME('AML.SCREEN.REQ') RQMNAME('AMLQM.PROD') +
+       XMITQ('AMLQM.XMIT') +
+       MAXMSGL(1048576) DEFPSIST(YES)
+
+DEFINE QLOCAL('AML.SCR.REPLY.Q') REPLACE +
+       DESCR('AML screening replies') +
+       MAXDEPTH(30000) DEFPSIST(YES) +
+       BOTHRESH(3) BOQNAME('CPS.DLQ') +
+       INDEXTYPE(MSGID)
+
+DEFINE QLOCAL('AMLQM.XMIT') REPLACE +
+       DESCR('Xmit to AMLQM') +
+       USAGE(XMITQ) MAXDEPTH(50000) +
+       TRIGGER TRIGTYPE(FIRST) INITQ('SYSTEM.CHANNEL.INITQ') +
+       TRIGDATA('AMLQM.SVRCONN')
+
+DEFINE PROCESS('CPS.PYIN.PROCESS') REPLACE +
+       DESCR('Start CICS PYIN on trigger') +
+       APPLTYPE(CICS) APPLICID(PYIN) +
+       USERDATA('ENV=PROD')
+
+DEFINE CHANNEL('CPS.SVRCONN') CHLTYPE(SVRCONN) REPLACE +
+       TRPTYPE(TCP) MCAUSER('CPSMQUSR') +
+       SSLCIPH('ANY_TLS12_OR_HIGHER') +
+       MAXMSGL(1048576)
+
+DEFINE CHANNEL('CPS.TO.AML') CHLTYPE(SDR) REPLACE +
+       TRPTYPE(TCP) CONNAME('aml-mq.bank.internal(1415)') +
+       XMITQ('AMLQM.XMIT') +
+       DISCINT(0) HBINT(30) +
+       SSLCIPH('ANY_TLS12_OR_HIGHER')
+
+DEFINE CHANNEL('AML.TO.CPS') CHLTYPE(RCVR) REPLACE +
+       TRPTYPE(TCP) +
+       SSLCIPH('ANY_TLS12_OR_HIGHER')
+
+*---- Alias for app portability --------------------------------------*
+DEFINE QALIAS('CPS.IN') REPLACE TARGET('CPS.IN.Q')
+DEFINE QALIAS('CPS.OUT') REPLACE TARGET('CPS.OUT.Q')
+
+*---- Subscription for events (pub/sub ops bus) ----------------------*
+DEFINE TOPIC('CPS/EVENTS/STATUS') REPLACE +
+       DESCR('Payment status change events') +
+       TOPICSTR('CPS/EVENTS/STATUS')
+
+DEFINE SUB('CPS.OPS.STATUS.SUB') REPLACE +
+       DEST('CPS.OPS.NOTIFY.Q') +
+       TOPICSTR('CPS/EVENTS/STATUS/#') +
+       DESTCLAS(PROVIDED) PSPROP(MSGPROP)
+
+DEFINE QLOCAL('CPS.OPS.NOTIFY.Q') REPLACE +
+       MAXDEPTH(20000) DEFPSIST(YES)
+
+DISPLAY QL(CPS.*)
+DISPLAY CHANNEL(CPS.*)

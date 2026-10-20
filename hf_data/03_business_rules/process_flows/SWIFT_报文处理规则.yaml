@@ -1,0 +1,101 @@
+# SWIFT 报文处理规则配置
+# 文档编号: RULE-CPS-SWIFT-001
+# 版本: V1.4.0
+
+message_types:
+  MT103:
+    direction: outbound
+    mandatory_fields: ["20", "23B", "32A", "50K", "59", "71A"]
+    optional_fields: ["70", "72", "77B"]
+    maps_to_iso20022: pacs.008.001.08
+  MT202:
+    direction: outbound
+    mandatory_fields: ["20", "21", "32A", "52A", "58A"]
+    maps_to_iso20022: pacs.009.001.08
+  pacs.008:
+    direction: both
+    schema: ISO20022_pacs.008.001.08
+  pacs.009:
+    direction: both
+    schema: ISO20022_pacs.009.001.08
+
+validation_rules:
+  - id: VAL001
+    name: IBAN_CHECKSUM
+    applies_to: [creditor_account, debtor_account]
+    when: account_format == IBAN
+    action_on_fail: REJECT
+  - id: VAL002
+    name: CCY_WHITELIST
+    allowed: [USD, EUR, GBP, HKD, CNY, JPY, AUD, SGD]
+    action_on_fail: REJECT
+  - id: VAL003
+    name: AMOUNT_POSITIVE
+    condition: amount > 0
+    action_on_fail: REJECT
+  - id: VAL004
+    name: BIC_FORMAT
+    pattern: "^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$"
+    action_on_fail: REJECT
+  - id: VAL005
+    name: VALUE_DATE_BUSINESS_DAY
+    calendar: HK_BANK_CAL
+    action_on_fail: ROLL_NEXT_BD
+
+routing_rules:
+  - id: RTE001
+    priority: 1
+    name: FORCE_BIC_MAP
+    table: PY_ROUTE_FORCE
+    description: 按收款行 BIC 强制通道
+  - id: RTE002
+    priority: 2
+    name: CCY_DEFAULT
+    map:
+      CNY: CNAPS
+      USD: SWIFT
+      EUR: SWIFT
+      GBP: SWIFT
+      HKD: LOCAL
+      JPY: SWIFT
+      AUD: SWIFT
+      SGD: SWIFT
+  - id: RTE003
+    priority: 3
+    name: HKD_SMALL_LOCAL
+    when: "currency==HKD AND amount<=10000"
+    channel: LOCAL
+  - id: RTE004
+    priority: 4
+    name: NOSTRO_CHECK
+    when: "nostro_available < amount"
+    action: REJECT
+    reason: RTE_NOSTRO
+
+aml_rules:
+  timeout_ms: 5000
+  on_timeout: HOLD_AML
+  on_hit: REJECT
+  on_suspect: HOLD_AML
+  entities: [ordering_customer, beneficiary, sender_bic, receiver_bic]
+
+cutoff_times:
+  SWIFT: "15:00 Asia/Shanghai"
+  CNAPS: "16:30 Asia/Shanghai"
+  LOCAL: "17:00 Asia/Shanghai"
+
+status_machine:
+  - from: INIT
+    to: [ACCEPTED, REJECTED]
+  - from: ACCEPTED
+    to: [AML_OK, HOLD_AML, REJECTED]
+  - from: HOLD_AML
+    to: [AML_OK, REJECTED]
+  - from: AML_OK
+    to: [ROUTED, REJECTED]
+  - from: ROUTED
+    to: [POSTED, ERROR]
+  - from: POSTED
+    to: [SETTLED, ERROR]
+  - from: SETTLED
+    to: [RECALLED]

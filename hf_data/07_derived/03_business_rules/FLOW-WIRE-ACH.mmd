@@ -1,0 +1,28 @@
+flowchart TD
+  A[WIRE.OUT / API POST /wires] --> B[WIREXFR0]
+  B --> C{function}
+  C -->|SEND or RECV| D[CALL OFACCHK0]
+  C -->|COMP| E[PR to CP 确认]
+  C -->|RVRS| F[冲正]
+  C -->|INQY| G[查询返回]
+  D -->|HIT| H[拒绝 E0101]
+  D -->|CLEAR| I{amount > 50000}
+  I -->|是| J[双人授权]
+  I -->|否| K[FILEIO0 记 WIRE + 账户]
+  J --> K
+  K --> L[待清算]
+
+  M[ACH.IN] --> N[ACHRECV0]
+  N --> O[CALL REGDCHK0]
+  O --> P[CALL OFACCHK0]
+  P --> Q[入账]
+  Q --> R[CALL AUDTLOG0]
+  R -->|R01-R09| S[退回码]
+
+  T[EOD.TRIGGER] --> U[EODPROC0]
+  U --> V[INTCALC0]
+  V --> W[TXNPOST0]
+  W --> X[GLPOST0 试算]
+  X -->|不平| Y[RC 8 停月末]
+  X -->|平| Z[AUDTLOG0]
+  Z --> AA[月末才跑 EOMPROC0 FEECALC0]

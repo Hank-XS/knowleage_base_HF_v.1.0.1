@@ -1,0 +1,38 @@
+%% SWIFT MT103 跨境汇出业务流程图
+%% 文档编号: FLOW-CPS-MT103-001
+%% 版本: V1.4.0
+
+flowchart TD
+    A[渠道收单 CGW/API] --> B{格式校验<br/>FR-001/FR-002}
+    B -->|失败| R1[REJECTED VAL00x]
+    B -->|通过| C[写入 CPS.IN.Q]
+    C --> D[CICS PYIN / PYMAIN]
+    D --> E[PYMSGIN 解析报文]
+    E --> F[PYVAL 业务校验]
+    F -->|失败| R1
+    F -->|通过| G[PYAML 制裁筛查]
+    G -->|超时| H[HOLD_AML]
+    H --> I{人工/自动续跑}
+    I -->|通过| J[AML_OK]
+    I -->|命中| R2[REJECTED AML001]
+    G -->|PASS| J
+    G -->|HIT| R2
+    J --> K[PYROUTE 选路]
+    K --> L{通道}
+    L -->|SWIFT| M1[组装 MT103/pacs.008]
+    L -->|CNAPS| M2[组装 CNAPS 报文]
+    L -->|LOCAL| M3[本地清算报文]
+    M1 --> N[PYPOST 账务过账]
+    M2 --> N
+    M3 --> N
+    N -->|死锁重试| N
+    N -->|成功| O[PYMSGOT 出站投递]
+    O --> P[STATUS=SETTLED]
+    P --> Q[日终 PYRECON# 对账]
+    Q -->|有差异| T[开立 INC 工单]
+    Q -->|平账| U[对账完成]
+
+    style R1 fill:#f66,color:#fff
+    style R2 fill:#f66,color:#fff
+    style P fill:#3a3,color:#fff
+    style H fill:#fa0

@@ -1,0 +1,39 @@
+{
+  "ticket_id": "INC-88355",
+  "type": "Incident",
+  "priority": "P1",
+  "status": "Closed",
+  "title": "过账死锁导致客户重复借记",
+  "opened_at": "2024-09-20T16:40:00+08:00",
+  "closed_at": "2024-09-20T18:10:00+08:00",
+  "system": "CPS",
+  "module": "PYPOST",
+  "reporter": "ops.cps",
+  "assignee": "li.ming",
+  "impact": {
+    "customers_affected": 3,
+    "amount_risk_usd": 450000.00,
+    "duplicate_debits": 2
+  },
+  "timeline": [
+    {"ts": "2024-09-20T16:40:00+08:00", "event": "告警：DB2 SQLCODE -911 突增"},
+    {"ts": "2024-09-20T16:45:00+08:00", "event": "确认 2 笔交易重复过账"},
+    {"ts": "2024-09-20T17:05:00+08:00", "event": "紧急关闭 CGW.CPS.ENABLE"},
+    {"ts": "2024-09-20T17:30:00+08:00", "event": "热修：PYPOST 增加 -911 重试逻辑"},
+    {"ts": "2024-09-20T17:50:00+08:00", "event": "NEWCOPY PYPOST，手工冲正重复借记"},
+    {"ts": "2024-09-20T18:10:00+08:00", "event": "渠道恢复，事件关闭"}
+  ],
+  "root_cause": "并发更新 PY_NOSTRO 同一币种行时发生死锁，调用方未限制重试，渠道超时重送导致重复借记",
+  "resolution": "1) PYPOST 对 -911/-913 最多重试 3 次并指数退避；2) 幂等键校验前移至过账前；3) 相关 2 笔手工冲正",
+  "related_artifacts": {
+    "txn_ids": ["CPS20240920018821", "CPS20240920018855"],
+    "change": "CHG-2024-09201",
+    "code": ["PYPOST.cbl"],
+    "ops_log_ref": "ops_2024-09-20.jsonl"
+  },
+  "lessons_learned": [
+    "过账路径必须幂等",
+    "死锁重试需有上限并监控",
+    "渠道超时与主机处理时延需对齐"
+  ]
+}

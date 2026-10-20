@@ -1,0 +1,85 @@
+{
+  "doc_id": "IF-API-CPS-002",
+  "title": "CPS 跨境支付 REST API 规范",
+  "version": "1.8.0",
+  "base_url": "https://api.bank.internal/cps/v1",
+  "auth": {
+    "type": "OAuth2.client_credentials",
+    "token_url": "https://auth.bank.internal/oauth/token",
+    "scopes": ["cps.payment.write", "cps.payment.read", "cps.status.read"]
+  },
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/payments",
+      "operation_id": "createPayment",
+      "summary": "发起跨境支付指令",
+      "request_body": {
+        "debtor_account": "HK001234567890",
+        "creditor_bic": "CHASUS33XXX",
+        "creditor_account": "US9876543210",
+        "amount": 125000.00,
+        "currency": "USD",
+        "value_date": "2024-10-17",
+        "purpose_code": "TRADE",
+        "remittance_info": "/INV/2024-8891"
+      },
+      "responses": {
+        "201": {
+          "txn_id": "CPS20241016000001",
+          "status": "ACCEPTED",
+          "estimated_settle": "2024-10-17T14:00:00Z"
+        },
+        "400": { "error_code": "VAL001", "message": "IBAN checksum failed" },
+        "422": { "error_code": "AML002", "message": "Pending AML screening" }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/payments/{txn_id}",
+      "operation_id": "getPaymentStatus",
+      "summary": "查询支付状态",
+      "path_params": { "txn_id": "CPS20241016000001" },
+      "responses": {
+        "200": {
+          "txn_id": "CPS20241016000001",
+          "status": "SETTLED",
+          "statuses": ["ACCEPTED", "AML_OK", "ROUTED", "POSTED", "SETTLED"],
+          "uetr": "97a8f0c2-4e1b-4d3a-9c6e-1b2a3c4d5e6f"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/payments/{txn_id}/cancel",
+      "operation_id": "cancelPayment",
+      "summary": "撤销未清算支付",
+      "responses": {
+        "200": { "status": "CANCELLED" },
+        "409": { "error_code": "ST009", "message": "Already settled, use recall" }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/nostro/{currency}/balance",
+      "operation_id": "getNostroBalance",
+      "summary": "查询 Nostro 可用余额",
+      "responses": {
+        "200": {
+          "currency": "USD",
+          "available": 45230000.55,
+          "booked": 45180000.00,
+          "as_of": "2024-10-16T10:30:00Z"
+        }
+      }
+    }
+  ],
+  "rate_limits": {
+    "createPayment": "200/min per client_id",
+    "getPaymentStatus": "1000/min per client_id"
+  },
+  "idempotency": {
+    "header": "Idempotency-Key",
+    "ttl_hours": 24
+  }
+}

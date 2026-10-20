@@ -1,0 +1,17 @@
+{
+  "name": "atm_withdraw_response",
+  "direction": "response",
+  "protocol": "CICS",
+  "version": "v3.2",
+  "used_by": ["ATM取款接口"],
+  "fields": [
+    {"name": "RESP-CODE", "type": "N", "length": 2, "desc": "响应码，对应错误码表"},
+    {"name": "TRAN-AMT", "type": "N", "length": 12, "desc": "交易金额（分）"},
+    {"name": "ACCT-BAL", "type": "N", "length": 15, "desc": "交易后账户余额（分）"},
+    {"name": "AVAIL-BAL", "type": "N", "length": 15, "desc": "可用余额（分），扣冻结额度"},
+    {"name": "CCY-CODE", "type": "C", "length": 3, "desc": "币种代码"},
+    {"name": "TXN-SEQ", "type": "C", "length": 16, "desc": "主机交易流水号"},
+    {"name": "TXN-DATE", "type": "N", "length": 8, "desc": "主机交易日期 YYYYMMDD"},
+    {"name": "FILLER", "type": "C", "length": 20, "desc": "保留字段"}
+  ]
+}

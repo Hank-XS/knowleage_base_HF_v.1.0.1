@@ -1,0 +1,22 @@
+{
+  "doc_id": "META-CARD-VAULT-001",
+  "method": "static calls in downloaded sources plus file DD names; counts are test estimates not production SMF",
+  "modules": [
+    {"module": "EODPROC0", "fan_out": 4, "callees": ["INTCALC0", "TXNPOST0", "GLPOST0", "AUDTLOG0"], "score": 90, "level": "Very High"},
+    {"module": "FILEIO0", "fan_in": 8, "score": 88, "level": "Very High", "note": "shared IO gateway"},
+    {"module": "CBSTM03A", "fan_out": 2, "callees": ["CBSTM03B", "CEE3ABD"], "score": 84, "level": "Very High", "note": "statement batch; ABEND coupled to totals"},
+    {"module": "ACHRECV0", "fan_out": 3, "callees": ["REGDCHK0", "OFACCHK0", "AUDTLOG0"], "score": 80, "level": "High"},
+    {"module": "WIREXFR0", "fan_out": 1, "callees": ["OFACCHK0"], "score": 78, "level": "High", "note": "dual control 50000 is local constant"},
+    {"module": "ZBNKBANK", "fan_out": 2, "callees": ["ZBNKAUTH", "ZBNKTXN"], "score": 70, "level": "High"},
+    {"module": "COACTUPC", "fan_out": 0, "score": 66, "level": "Medium-High", "note": "3860 lines internal edit logic, low call fan-out high change risk"},
+    {"module": "BANK-MAIN", "fan_out": 9, "score": 60, "level": "Medium", "note": "menu only"},
+    {"module": "DATEUTIL", "fan_in": 2, "callers": ["HOLDCALC0", "DISPMGT0"], "score": 40, "level": "Medium"},
+    {"module": "CSUTLDTC", "fan_in": 2, "callers": ["COTRN02C", "CORPT00C"], "score": 35, "level": "Low"}
+  ],
+  "hotspots": [
+    {"name": "CBSTM03B missing from upstream drop", "impact": "CBSTM03A cannot link"},
+    {"name": "OFACCHK0 shared by WIRE and ACH", "impact": "sanctions rule change hits both rails"},
+    {"name": "TXNPOST0 shared by EOD and EOM", "impact": "posting defect double-counts monthly"},
+    {"name": "COACTUPC size", "impact": "account update is a single compilation unit"}
+  ]
+}

@@ -1,0 +1,48 @@
+# Secrets / local env
+.env
+backend/.env
+**/.env.local
+**/.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.db
+*.sqlite3
+
+# Node / frontend build
+node_modules/
+.pnpm-store/
+.turbo/
+.cache/
+dist/
+dist-ssr/
+coverage/
+*.log
+.eslintcache
+.stylelintcache
+
+# IDE / OS
+.idea/
+.vscode/
+.history/
+.cursor/
+.DS_Store
+Thumbs.db
+
+# Runtime / local data
+backend/data/runtime/
+backend/data/objects/kb-managed/
+backend/.local/
+*.local
+
+# Archives
+*.zip
+*.tar
+*.war

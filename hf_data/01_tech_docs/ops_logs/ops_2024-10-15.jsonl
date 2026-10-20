@@ -1,0 +1,17 @@
+{"ts":"2024-10-15T00:05:12+08:00","level":"INFO","source":"CICS-CPSP001","txn":"PYIN","msg":"Region warm start complete, MAXTASK=200"}
+{"ts":"2024-10-15T01:12:44+08:00","level":"WARN","source":"MQ-CPSQM","queue":"CPS.IN.Q","msg":"Depth rising","depth":8200,"threshold":8000}
+{"ts":"2024-10-15T01:13:10+08:00","level":"INFO","source":"AUTO-SCALE","msg":"CICS task class PYIN priority boosted"}
+{"ts":"2024-10-15T02:00:01+08:00","level":"INFO","source":"JCL-PYBACKUP#","msg":"Nightly backup started","jobid":"JOB28401"}
+{"ts":"2024-10-15T02:18:33+08:00","level":"INFO","source":"JCL-PYBACKUP#","msg":"Backup completed RC=0","bytes":1847291023}
+{"ts":"2024-10-15T09:22:05+08:00","level":"ERROR","source":"CICS-PYVAL","txn_id":"CPS20241015008342","code":"VAL001","msg":"IBAN checksum failed for DE89370400440532013000"}
+{"ts":"2024-10-15T09:22:06+08:00","level":"INFO","source":"CPS-STATUS","txn_id":"CPS20241015008342","status":"REJECTED"}
+{"ts":"2024-10-15T10:45:19+08:00","level":"WARN","source":"AML-GW","txn_id":"CPS20241015009101","msg":"AML reply timeout 5s, hold transaction"}
+{"ts":"2024-10-15T10:45:20+08:00","level":"INFO","source":"CPS-STATUS","txn_id":"CPS20241015009101","status":"HOLD_AML"}
+{"ts":"2024-10-15T10:46:02+08:00","level":"INFO","source":"AML-GW","txn_id":"CPS20241015009101","msg":"AML clear received","result":"PASS"}
+{"ts":"2024-10-15T10:46:03+08:00","level":"INFO","source":"CPS-STATUS","txn_id":"CPS20241015009101","status":"AML_OK"}
+{"ts":"2024-10-15T14:33:51+08:00","level":"ERROR","source":"DB2-PYPOST","txn_id":"CPS20241015012088","sqlcode":-911,"msg":"Deadlock victim, retry scheduled"}
+{"ts":"2024-10-15T14:33:52+08:00","level":"INFO","source":"PYPOST","txn_id":"CPS20241015012088","msg":"Retry #1 success"}
+{"ts":"2024-10-15T18:01:00+08:00","level":"INFO","source":"METRICS","metric":"tps_peak","value":612,"window":"17:55-18:00"}
+{"ts":"2024-10-15T23:30:00+08:00","level":"INFO","source":"JCL-PYRECON#","msg":"EOD reconciliation started","jobid":"JOB29110"}
+{"ts":"2024-10-15T23:47:22+08:00","level":"WARN","source":"JCL-PYRECON#","msg":"Nostro USD break amount 1500.00","acct":"NOSTRO.USD.CHAS"}
+{"ts":"2024-10-15T23:52:08+08:00","level":"INFO","source":"JCL-PYRECON#","msg":"Recon completed with 1 break, ticket INC opened","rc":4}

@@ -1,0 +1,19 @@
+CPS CODEBASE LANDMINES (ops wiki copy-paste 2023, already outdated)
+=================================================================
+1. PYMAIN VIP list skip AML - DO NOT mention in audit
+2. PYPOST fee v1/v2/v3 - which one runs depends on CCY, not doc
+3. PYROUTE CNY appears twice in table, last wins = SWIFT not CNAPS
+4. PYRECON# STEP015+STEP035+STEP099 - fear delete
+5. email still to AH.MING retired 2019
+6. smoke script exit 0 on failure - jenkins always green
+7. COMMON.cpy change = nuclear
+8. FIXTMP1 still in PROD LOAD from 2020-03-15
+9. CPSGRP vs CPSGRP2 split brain on CPSP001/CPSP002
+10. PYACCT.OLD mounted on GRP2
+11. SQL SP match uses C.AMOUNT - C.AMOUNT (always 0 diff) ???
+12. DLQ REXX V1 and V2 both in crontab
+13. password in cps_smoke_deploy.sh - vault later (2019)
+14. COM-TEST-MODE check before every release (sometimes forget)
+15. dead code 7777-DEAD-CODE still linked if OLDPROG* present
+
+"if you are new: clone, cry, then ask Ming's Ming (nephew)"

@@ -1,0 +1,52 @@
+{
+  "doc_id": "DD-VSAM-CPS-001",
+  "version": "1.3.0",
+  "files": [
+    {
+      "ddname": "PYACCT",
+      "dsname": "CPS.PROD.VSAM.ACCT",
+      "org": "KSDS",
+      "key": {
+        "position": 1,
+        "length": 20,
+        "name": "ACCT_KEY"
+      },
+      "record_length": 256,
+      "ci_size": 4096,
+      "ca_size": 1,
+      "share_options": "2,3",
+      "rls": true,
+      "fields": [
+        {"name": "ACCT_KEY", "offset": 1, "len": 20, "type": "CH", "desc": "账号主键"},
+        {"name": "ACCT_NAME", "offset": 21, "len": 40, "type": "CH", "desc": "账户名称"},
+        {"name": "CCY", "offset": 61, "len": 3, "type": "CH", "desc": "币种"},
+        {"name": "BAL_BOOK", "offset": 64, "len": 8, "type": "PD", "desc": "账面余额 COMP-3"},
+        {"name": "BAL_AVAIL", "offset": 72, "len": 8, "type": "PD", "desc": "可用余额"},
+        {"name": "STATUS", "offset": 80, "len": 1, "type": "CH", "desc": "A=Active F=Frozen C=Closed"},
+        {"name": "LAST_TXN", "offset": 81, "len": 17, "type": "CH", "desc": "最近交易号"},
+        {"name": "UPD_TS", "offset": 98, "len": 26, "type": "CH", "desc": "更新时间戳字符"}
+      ],
+      "access_programs": ["PYPOST", "PYVAL", "PYNOSTRO"],
+      "daily_io_estimate": {"reads": 420000, "writes": 85000}
+    },
+    {
+      "ddname": "PYCTRL",
+      "dsname": "CPS.PROD.VSAM.CTRL",
+      "org": "KSDS",
+      "key": {
+        "position": 1,
+        "length": 16,
+        "name": "CTRL_KEY"
+      },
+      "record_length": 128,
+      "fields": [
+        {"name": "CTRL_KEY", "offset": 1, "len": 16, "type": "CH", "desc": "控制键 e.g. SEQ.TXNID"},
+        {"name": "CTRL_VAL", "offset": 17, "len": 40, "type": "CH", "desc": "控制值"},
+        {"name": "UPD_TS", "offset": 57, "len": 26, "type": "CH", "desc": "更新时间"}
+      ],
+      "access_programs": ["PYMAIN", "PYSTAT"],
+      "daily_io_estimate": {"reads": 120000, "writes": 120000},
+      "notes": "存放交易号序号器、日切标志、渠道开关"
+    }
+  ]
+}

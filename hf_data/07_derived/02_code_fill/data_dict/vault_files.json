@@ -1,0 +1,13 @@
+{
+  "source": "vault_cbs programs FILEIO0 EODPROC0 WIREXFR0 ACHRECV0 GLPOST0 LOANPMT0",
+  "files": [
+    {"name": "ACCT", "programs": ["ACCTMGMT", "EODPROC0", "EOMPROC0", "ACHRECV0", "WIREXFR0"], "copybook": "CPYACCT"},
+    {"name": "WIRE", "programs": ["WIREXFR0"], "copybook": "CPYWIRE", "functions": ["SEND", "RECV", "COMP", "RVRS", "INQY"], "dual_control": 50000},
+    {"name": "TXN", "programs": ["TXNPOST0", "EODPROC0", "EOMPROC0"], "copybook": "CPYTXN"},
+    {"name": "GL", "programs": ["GLPOST0", "EODPROC0"], "copybook": "CPYGL", "check": "trial balance difference = 0"},
+    {"name": "HOLD", "programs": ["HOLDCALC0", "EODPROC0"], "copybook": "CPYHOLD", "calls": ["DATEUTIL"]},
+    {"name": "CTR", "programs": ["EODPROC0", "BSACTRO"], "copybook": "CPYCTR"},
+    {"name": "LOAN", "programs": ["LOANPMT0"]},
+    {"name": "AUDIT", "programs": ["AUDTLOG0"], "writers": ["EODPROC0", "EOMPROC0", "ACHRECV0"]}
+  ]
+}

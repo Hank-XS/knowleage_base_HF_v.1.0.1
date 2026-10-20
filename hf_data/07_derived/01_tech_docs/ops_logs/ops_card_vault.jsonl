@@ -1,0 +1,16 @@
+{"ts":"2024-10-16T01:05:11+08:00","job":"CBSTM03A#","pgm":"CBSTM03A","msg":"OPEN TRNXFILE via CBSTM03B oper=O rc=00"}
+{"ts":"2024-10-16T01:06:40+08:00","job":"CBSTM03A#","pgm":"CBSTM03A","msg":"CALL CBSTM03B oper=R","cards":18420}
+{"ts":"2024-10-16T01:11:02+08:00","job":"CBSTM03A#","level":"ERROR","pgm":"CBSTM03A","msg":"CEE3ABD abend path hit","stmt":"HTML total mismatch"}
+{"ts":"2024-10-16T01:40:00+08:00","job":"VAULTEOD#","pgm":"EODPROC0","msg":"start interest accrual"}
+{"ts":"2024-10-16T01:40:08+08:00","job":"VAULTEOD#","pgm":"EODPROC0","callee":"INTCALC0","rc":"E0000","accounts":12004}
+{"ts":"2024-10-16T01:41:22+08:00","job":"VAULTEOD#","pgm":"EODPROC0","callee":"TXNPOST0","posted":12004}
+{"ts":"2024-10-16T01:42:01+08:00","job":"VAULTEOD#","pgm":"EODPROC0","callee":"GLPOST0","trial_balanced":"Y","diff":0.00}
+{"ts":"2024-10-16T09:12:33+08:00","region":"CICSTEST","tran":"CB00","pgm":"COBIL00C","msg":"bill pay full","acct":"00000000015","file":"TRANSACT","rc":0}
+{"ts":"2024-10-16T09:12:34+08:00","region":"CICSTEST","tran":"CB00","pgm":"COBIL00C","msg":"XCTL back to menu"}
+{"ts":"2024-10-16T10:02:18+08:00","pgm":"WIREXFR0","function":"SEND","amount":62000.00,"msg":"dual control required threshold=50000","callee":"OFACCHK0","ofac":"CLEAR"}
+{"ts":"2024-10-16T10:18:44+08:00","pgm":"ACHRECV0","msg":"return R01","callee":"REGDCHK0","audit":"AUDTLOG0"}
+{"ts":"2024-10-16T11:05:00+08:00","pgm":"ZBNKBANK","msg":"LINK ZBNKAUTH ok","acct":"1000000001"}
+{"ts":"2024-10-16T11:05:02+08:00","pgm":"ZBNKTXN","msg":"REWRITE both accounts transfer","dataset":"ZBNKACC"}
+{"ts":"2024-10-16T14:22:09+08:00","region":"CICSTEST","tran":"CT02","pgm":"COTRN02C","callee":"CSUTLDTC","msg":"date util ok write TRANSACT"}
+{"ts":"2024-10-16T16:40:12+08:00","region":"CICSTEST","tran":"CAUP","pgm":"COACTUPC","msg":"account update validation fail","field":"FICO"}
+{"ts":"2024-10-16T23:10:00+08:00","job":"VAULTEOM#","pgm":"EOMPROC0","callee":"FEECALC0","msg":"month fee pass"}

@@ -1,0 +1,8 @@
+src_system,src_field,dst_system,dst_field,rule,business_key
+CORE,TRAN-AMT,NEW,PAY_TXN_AMT,数值直传（分→元，需除以100）,atm_withdraw
+CORE,ACCT-NUM,NEW,PAY_ACCT_NO,账号直接映射,atm_withdraw
+CORE,RESP-CODE,NEW,PAY_RET_CODE,按错误码映射表转换（14->INSUFFICIENT_FUNDS）,atm_withdraw
+CORE,CCY-CODE,NEW,PAY_CCY,币种代码ISO映射（如CNY->156）,atm_withdraw
+CORE,CARD-TYPE,NEW,PAY_CARD_KIND,卡种口径映射（三种口径->六种口径，Smart卡->借记卡）,atm_withdraw
+CORE,TXN-DATE,NEW,PAY_TXN_TIME,日期时间拼接（YYYYMMDD+HHMMSS）,atm_withdraw
+CORE,BRANCH-CODE,NEW,PAY_BRANCH_NO,机构码直接映射,atm_withdraw

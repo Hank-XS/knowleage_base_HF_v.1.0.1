@@ -1,0 +1,46 @@
+# 接口规范 IF-MQ-CARD-VAULT-001
+# 依据程序: COBIL00C(CB00), COTRN02C, WIREXFR0, ACHRECV0, EODPROC0
+# 说明: 源码为 CICS/CALL，下列 MQ 是按程序边界补的测试接口
+
+queue_manager: CARDQM.TEST
+queues:
+  - name: CARD.TRAN.IN
+    producers: [COTRN02C, CBTRN02C]
+    consumers: [TXNPOST0]
+    max_depth: 20000
+    payload_fields: [TRAN_ID, CARD_NUM, TRAN_AMT, TRAN_TYPE_CD, TRAN_ORIG_TS]
+  - name: CARD.BILLPAY.OUT
+    producers: [COBIL00C]
+    consumers: [ACHRECV0]
+    description: CB00 全额还款后投递
+    payload_example:
+      pgm: COBIL00C
+      tranid: CB00
+      file: TRANSACT
+      acct_id: "00000000001"
+      amount: 1520.44
+      pay_type: FULL
+  - name: WIRE.OUT
+    producers: [WIREXFR0]
+    consumers: [SWIFT-GW]
+    functions: [SEND, RECV, COMP, RVRS, INQY]
+    dual_control_usd: 50000.00
+    ofac_callee: OFACCHK0
+  - name: ACH.IN
+    producers: [ACH-GW]
+    consumers: [ACHRECV0]
+    callees: [REGDCHK0, OFACCHK0, AUDTLOG0]
+  - name: EOD.TRIGGER
+    producers: [scheduler]
+    consumers: [EODPROC0]
+    then_calls: [INTCALC0, TXNPOST0, GLPOST0, AUDTLOG0]
+  - name: CARD.DLQ
+    bothresh_sources: [CARD.TRAN.IN, CARD.BILLPAY.OUT, WIRE.OUT]
+
+error_codes_from_code:
+  - code: E0000
+    program: WIREXFR0
+    meaning: 电汇主逻辑初始成功码
+  - code: CEE3ABD
+    program: CBSTM03A
+    meaning: 账单批处理主动 ABEND

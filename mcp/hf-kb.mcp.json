@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "hf-kb": {
+      "command": "python",
+      "args": ["-m", "app.mcp_server"],
+      "cwd": "D:/zcode/hsbc/kb-system/backend",
+      "env": {
+        "KB_DATASET_ROOT": "D:/zcode/hsbc/kb-system/hf_data"
+      }
+    }
+  }
+}

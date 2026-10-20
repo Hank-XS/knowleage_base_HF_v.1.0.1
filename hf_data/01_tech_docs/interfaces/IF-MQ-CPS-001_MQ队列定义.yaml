@@ -1,0 +1,107 @@
+# MQ 接口规范 - CPS 跨境支付
+# 文档编号: IF-MQ-CPS-001
+# 版本: V2.4.0
+# Queue Manager: CPSQM.PROD / CPSQM.UAT
+
+queue_manager:
+  name: CPSQM.PROD
+  host: mq-cps-prod.bank.internal
+  port: 1414
+  channel: CPS.SVRCONN
+  ccsid: 1208
+
+queues:
+  - name: CPS.IN.Q
+    type: local
+    max_depth: 50000
+    max_msg_length: 1048576
+    description: 渠道入站支付指令
+    message_format: XML / JSON
+    producers: [CGW, API-GW]
+    consumers: [CICS-PYIN]
+    persistence: persistent
+    priority: 5
+
+  - name: CPS.OUT.Q
+    type: local
+    max_depth: 50000
+    max_msg_length: 1048576
+    description: 出站清算报文待投递
+    producers: [CICS-PYOT]
+    consumers: [SWIFT-GW, CNAPS-GW]
+
+  - name: CPS.REPLY.Q
+    type: local
+    max_depth: 20000
+    description: 同步应答队列
+    correlation: MsgId / CorrelId
+
+  - name: AML.SCR.Q
+    type: remote
+    remote_qmgr: AMLQM.PROD
+    remote_queue: AML.SCREEN.REQ
+    description: 反洗钱筛查请求
+
+  - name: AML.SCR.REPLY.Q
+    type: local
+    max_depth: 30000
+    description: AML 筛查结果回执
+
+  - name: CPS.DLQ
+    type: local
+    max_depth: 10000
+    description: 死信队列
+    alert_threshold: 10
+
+  - name: CPS.RECON.Q
+    type: local
+    max_depth: 10000
+    description: 日终对账触发消息
+    trigger: time_based
+    schedule: "23:30 Asia/Shanghai"
+
+message_headers:
+  required:
+    - name: MSG_TYPE
+      values: [MT103, MT202, pacs.008, pacs.009, camt.053]
+    - name: TXN_ID
+      pattern: "^CPS[0-9]{14}$"
+    - name: SRC_SYS
+      values: [CGW, API, BATCH, MANUAL]
+    - name: PRIORITY
+      values: [1, 5, 9]
+  optional:
+    - name: CORREL_ID
+    - name: REPLY_TO_Q
+    - name: EXPIRY_MS
+
+sample_payload_mt103: |
+  {
+    "header": {
+      "MSG_TYPE": "MT103",
+      "TXN_ID": "CPS20241016000001",
+      "SRC_SYS": "CGW",
+      "PRIORITY": 5
+    },
+    "body": {
+      "sender_bic": "HSBCHKHHXXX",
+      "receiver_bic": "CHASUS33XXX",
+      "amount": 125000.00,
+      "currency": "USD",
+      "value_date": "2024-10-17",
+      "ordering_customer": "ACME TRADING LTD",
+      "beneficiary": "GLOBAL SUPPLY INC",
+      "remittance_info": "/INV/2024-8891"
+    }
+  }
+
+error_codes:
+  - code: MQE001
+    meaning: 队列满
+    action: 告警并降级入批处理缓冲
+  - code: MQE002
+    meaning: 消息格式非法
+    action: 入 DLQ，生成工单
+  - code: MQE003
+    meaning: AML 超时无应答
+    action: 交易挂起 STATUS=HOLD_AML
