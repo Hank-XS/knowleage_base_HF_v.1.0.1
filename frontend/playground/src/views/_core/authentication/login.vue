@@ -8,10 +8,12 @@ import { AuthenticationLogin, SliderCaptcha, z } from '@vben/common-ui';
 import { $t } from '@vben/locales';
 
 import { useAuthStore } from '#/store';
+import { getDemoPassword } from '#/utils/demo-account';
 
 defineOptions({ name: 'Login' });
 
 const authStore = useAuthStore();
+const demoPassword = getDemoPassword();
 
 const MOCK_USER_OPTIONS: BasicOption[] = [
   {
@@ -32,23 +34,6 @@ const formSchema = computed((): VbenFormSchema[] => {
   return [
     {
       component: 'VbenSelect',
-      // componentProps(_values, form) {
-      //   return {
-      //     'onUpdate:modelValue': (value: string) => {
-      //       const findItem = MOCK_USER_OPTIONS.find(
-      //         (item) => item.value === value,
-      //       );
-      //       if (findItem) {
-      //         form.setValues({
-      //           password: '123456',
-      //           username: findItem.label,
-      //         });
-      //       }
-      //     },
-      //     options: MOCK_USER_OPTIONS,
-      //     placeholder: $t('authentication.selectAccount'),
-      //   };
-      // },
       componentProps: {
         options: MOCK_USER_OPTIONS,
         placeholder: $t('authentication.selectAccount'),
@@ -74,7 +59,7 @@ const formSchema = computed((): VbenFormSchema[] => {
             );
             if (findUser) {
               form.setValues({
-                password: '123456',
+                password: demoPassword,
                 username: findUser.value,
               });
             }

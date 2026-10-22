@@ -5,6 +5,9 @@ export default defineConfig(async () => {
     application: {},
     vite: {
       server: {
+        headers: {
+          'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+        },
         proxy: {
           // 同源代理：页面只依赖 5666 一个源，/api 由 Vite 转发到后端，
           // 避免外部浏览器代理拦截 127.0.0.1:8000 造成的跨域访问失败
@@ -14,6 +17,11 @@ export default defineConfig(async () => {
             target: 'http://127.0.0.1:8000',
             ws: true,
           },
+        },
+      },
+      preview: {
+        headers: {
+          'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
         },
       },
     },

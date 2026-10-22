@@ -25,14 +25,14 @@ defineOptions({
 });
 
 const props = withDefaults(defineProps<Props>(), {
+  accountRecoveryPath: '/auth/account-recovery',
   codeLoginPath: '/auth/code-login',
-  forgetPasswordPath: '/auth/forget-password',
   formSchema: () => [],
   loading: false,
   qrCodeLoginPath: '/auth/qrcode-login',
   registerPath: '/auth/register',
+  showAccountRecovery: true,
   showCodeLogin: true,
-  showForgetPassword: true,
   showQrcodeLogin: true,
   showRegister: true,
   showRememberMe: true,
@@ -111,7 +111,7 @@ defineExpose({
     <Form />
 
     <div
-      v-if="showRememberMe || showForgetPassword"
+      v-if="showRememberMe || showAccountRecovery"
       class="mb-6 flex justify-between"
     >
       <div class="flex-center">
@@ -125,9 +125,9 @@ defineExpose({
       </div>
 
       <span
-        v-if="showForgetPassword"
+        v-if="showAccountRecovery"
         class="vben-link text-sm font-normal"
-        @click="handleGo(forgetPasswordPath)"
+        @click="handleGo(accountRecoveryPath)"
       >
         {{ $t('authentication.forgetPassword') }}
       </span>

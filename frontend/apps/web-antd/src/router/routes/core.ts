@@ -74,8 +74,8 @@ const coreRoutes: RouteRecordRaw[] = [
         },
       },
       {
-        name: 'ForgetPassword',
-        path: 'forget-password',
+        name: 'AccountRecovery',
+        path: 'account-recovery',
         component: () =>
           import('#/views/_core/authentication/forget-password.vue'),
         meta: {

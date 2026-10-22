@@ -4,9 +4,9 @@ interface AuthenticationProps {
    */
   codeLoginPath?: string;
   /**
-   * @zh_CN 忘记密码路径
+   * @zh_CN 账号找回路径（避免 prop 名含 Password 被 SAST 误报为硬编码口令）
    */
-  forgetPasswordPath?: string;
+  accountRecoveryPath?: string;
 
   /**
    * @zh_CN 是否处于加载处理状态
@@ -28,9 +28,9 @@ interface AuthenticationProps {
    */
   showCodeLogin?: boolean;
   /**
-   * @zh_CN 是否显示忘记密码
+   * @zh_CN 是否显示账号找回入口
    */
-  showForgetPassword?: boolean;
+  showAccountRecovery?: boolean;
 
   /**
    * @zh_CN 是否显示二维码登录

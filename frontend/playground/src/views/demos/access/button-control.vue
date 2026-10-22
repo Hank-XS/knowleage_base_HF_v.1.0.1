@@ -1,6 +1,4 @@
 <script lang="ts" setup>
-import type { Recordable } from '@vben/types';
-
 import { useRouter } from 'vue-router';
 
 import { AccessControl, useAccess } from '@vben/access';
@@ -10,21 +8,9 @@ import { resetAllStores, useUserStore } from '@vben/stores';
 import { Button, Card } from 'antdv-next';
 
 import { useAuthStore } from '#/store';
+import { getDemoAccounts } from '#/utils/demo-account';
 
-const accounts: Record<string, Recordable<any>> = {
-  admin: {
-    password: '123456',
-    username: 'admin',
-  },
-  super: {
-    password: '123456',
-    username: 'vben',
-  },
-  user: {
-    password: '123456',
-    username: 'jack',
-  },
-};
+const accounts = getDemoAccounts();
 
 const { accessMode, hasAccessByCodes } = useAccess();
 const authStore = useAuthStore();

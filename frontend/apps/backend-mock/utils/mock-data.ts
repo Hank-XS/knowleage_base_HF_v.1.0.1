@@ -12,10 +12,23 @@ export interface TimezoneOption {
   timezone: string;
 }
 
+/** Mock 演示口令：从环境变量读取，避免源码硬编码（Checkmarx Hardcoded Password） */
+function getMockUserPassword(): string {
+  const password = process.env.MOCK_USER_PASSWORD;
+  if (!password) {
+    throw new Error(
+      'Missing MOCK_USER_PASSWORD. Set it in apps/backend-mock/.env.local',
+    );
+  }
+  return password;
+}
+
+const mockUserPassword = getMockUserPassword();
+
 export const MOCK_USERS: UserInfo[] = [
   {
     id: 0,
-    password: '123456',
+    password: mockUserPassword,
     realName: 'Vben',
     roles: ['super'],
     username: 'vben',
@@ -23,7 +36,7 @@ export const MOCK_USERS: UserInfo[] = [
   },
   {
     id: 1,
-    password: '123456',
+    password: mockUserPassword,
     realName: 'Admin',
     roles: ['admin'],
     username: 'admin',
@@ -31,7 +44,7 @@ export const MOCK_USERS: UserInfo[] = [
   },
   {
     id: 2,
-    password: '123456',
+    password: mockUserPassword,
     realName: 'Jack',
     roles: ['user'],
     username: 'jack',

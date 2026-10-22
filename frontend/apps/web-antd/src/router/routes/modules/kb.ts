@@ -1,5 +1,8 @@
 import type { RouteRecordRaw } from 'vue-router';
 
+/** 菜单分组外壳（仅承载子路由，不改变页面 URL） */
+const PassThrough = () => import('#/layouts/pass-through.vue');
+
 const routes: RouteRecordRaw[] = [
   // 兼容 Vben 默认 / 缓存首页（localStorage 可能仍指向 /dashboard）
   {
@@ -14,137 +17,183 @@ const routes: RouteRecordRaw[] = [
   },
   {
     meta: {
-      icon: 'lucide:folder-kanban',
-      order: -11,
-      title: '知识库管理',
-    },
-    name: 'KnowledgeManage',
-    path: '/knowledge',
-    redirect: '/knowledge/docs',
-    children: [
-      {
-        name: 'KnowledgeDocs',
-        path: 'docs',
-        component: () => import('#/views/knowledge/docs/index.vue'),
-        meta: {
-          icon: 'lucide:library',
-          title: '知识库列表',
-        },
-      },
-      {
-        name: 'KnowledgeUpload',
-        path: 'upload',
-        component: () => import('#/views/knowledge/upload/index.vue'),
-        meta: {
-          icon: 'lucide:upload',
-          title: '上传文档',
-        },
-      },
-      {
-        name: 'KnowledgeChunk',
-        path: 'chunk',
-        component: () => import('#/views/knowledge/chunk/index.vue'),
-        meta: {
-          icon: 'lucide:scissors',
-          title: '切片查看',
-        },
-      },
-      {
-        name: 'KnowledgeDiff',
-        path: 'diff',
-        component: () => import('#/views/knowledge/diff/index.vue'),
-        meta: {
-          icon: 'lucide:git-compare',
-          title: '版本对比',
-        },
-      },
-      {
-        name: 'KnowledgeCodeMap',
-        path: 'codemap',
-        component: () => import('#/views/knowledge/codemap/index.vue'),
-        meta: {
-          icon: 'lucide:link-2',
-          title: '代码文档映射',
-        },
-      },
-      {
-        name: 'KnowledgeGraphAlias',
-        path: 'graph',
-        redirect: '/kb/graph',
-        meta: {
-          icon: 'lucide:share-2',
-          title: '知识图谱',
-        },
-      },
-    ],
-  },
-  {
-    meta: {
-      icon: 'lucide:database',
+      icon: 'lucide:library',
       order: -10,
-      title: '知识库平台',
+      title: '知识库',
     },
-    name: 'KnowledgeBase',
+    name: 'KnowledgeHub',
     path: '/kb',
+    redirect: '/kb/qa',
     children: [
+      /* —— 智能应用（叶子路径保持 /kb/*） —— */
       {
-        name: 'KbQa',
-        path: 'qa',
-        component: () => import('#/views/kb/qa/index.vue'),
+        component: PassThrough,
         meta: {
-          icon: 'lucide:messages-square',
-          title: '问答控制台',
+          icon: 'lucide:sparkles',
+          order: 10,
+          title: '智能应用',
+        },
+        name: 'KbApps',
+        path: 'apps',
+        redirect: '/kb/qa',
+        children: [
+          {
+            name: 'KbQa',
+            path: '/kb/qa',
+            component: () => import('#/views/kb/qa/index.vue'),
+            meta: {
+              icon: 'lucide:messages-square',
+              order: 1,
+              title: '问答控制台',
+            },
+          },
+          {
+            name: 'KbGraph',
+            path: '/kb/graph',
+            component: () => import('#/views/kb/graph/index.vue'),
+            meta: {
+              icon: 'lucide:share-2',
+              order: 2,
+              title: '图谱总览',
+            },
+          },
+          {
+            name: 'KbImpact',
+            path: '/kb/impact',
+            component: () => import('#/views/kb/impact/index.vue'),
+            meta: {
+              icon: 'lucide:git-branch',
+              order: 3,
+              title: '影响分析与代码生成',
+            },
+          },
+          {
+            name: 'KbCodeTree',
+            path: '/kb/code-tree',
+            component: () => import('#/views/kb/code-tree/index.vue'),
+            meta: {
+              icon: 'lucide:folder-tree',
+              order: 4,
+              title: '代码树与注释',
+            },
+          },
+        ],
+      },
+
+      /* —— 内容管理（叶子路径保持 /knowledge/*） —— */
+      {
+        component: PassThrough,
+        meta: {
+          icon: 'lucide:folder-kanban',
+          order: 20,
+          title: '内容管理',
+        },
+        name: 'KbContent',
+        path: '/knowledge',
+        redirect: '/knowledge/docs',
+        children: [
+          {
+            name: 'KnowledgeDocs',
+            path: 'docs',
+            component: () => import('#/views/knowledge/docs/index.vue'),
+            meta: {
+              icon: 'lucide:library',
+              order: 1,
+              title: '知识库列表',
+            },
+          },
+          {
+            name: 'KnowledgeUpload',
+            path: 'upload',
+            component: () => import('#/views/knowledge/upload/index.vue'),
+            meta: {
+              icon: 'lucide:upload',
+              order: 2,
+              title: '上传文档',
+            },
+          },
+          {
+            name: 'KnowledgeChunk',
+            path: 'chunk',
+            component: () => import('#/views/knowledge/chunk/index.vue'),
+            meta: {
+              icon: 'lucide:scissors',
+              order: 3,
+              title: '切片查看',
+            },
+          },
+          {
+            name: 'KnowledgeDiff',
+            path: 'diff',
+            component: () => import('#/views/knowledge/diff/index.vue'),
+            meta: {
+              icon: 'lucide:git-compare',
+              order: 4,
+              title: '版本对比',
+            },
+          },
+          {
+            name: 'KnowledgeCodeMap',
+            path: 'codemap',
+            component: () => import('#/views/knowledge/codemap/index.vue'),
+            meta: {
+              icon: 'lucide:link-2',
+              order: 5,
+              title: '代码文档映射',
+            },
+          },
+        ],
+      },
+
+      /* —— 构建与治理 —— */
+      {
+        component: PassThrough,
+        meta: {
+          icon: 'lucide:wrench',
+          order: 30,
+          title: '构建与治理',
+        },
+        name: 'KbOps',
+        path: 'ops',
+        redirect: '/kb/ingest',
+        children: [
+          {
+            name: 'KbIngest',
+            path: '/kb/ingest',
+            component: () => import('#/views/kb/ingest/index.vue'),
+            meta: {
+              authority: ['gov', 'admin', 'dev'],
+              icon: 'lucide:upload-cloud',
+              order: 1,
+              title: '知识接入',
+            },
+          },
+          {
+            name: 'KbGovernance',
+            path: '/kb/governance',
+            component: () => import('#/views/kb/governance/index.vue'),
+            meta: {
+              authority: ['gov', 'admin', 'biz', 'arch'],
+              icon: 'lucide:clipboard-check',
+              order: 2,
+              title: '治理工作台',
+            },
+          },
+        ],
+      },
+
+      {
+        name: 'KbSystem',
+        path: 'system',
+        component: () => import('#/views/kb/system/index.vue'),
+        meta: {
+          icon: 'lucide:settings-2',
+          order: 90,
+          title: '系统状态',
         },
       },
-      {
-        name: 'KbGraph',
-        path: 'graph',
-        component: () => import('#/views/kb/graph/index.vue'),
-        meta: {
-          icon: 'lucide:share-2',
-          title: '图谱总览',
-        },
-      },
-      {
-        name: 'KbGovernance',
-        path: 'governance',
-        component: () => import('#/views/kb/governance/index.vue'),
-        meta: {
-          // 与 /user/info 返回的 roles（gov/admin/biz/arch）匹配；
-          // 接口侧由后端 require_roles 双重校验
-          authority: ['gov', 'admin', 'biz', 'arch'],
-          icon: 'lucide:clipboard-check',
-          title: '治理工作台',
-        },
-      },
-      {
-        name: 'KbIngest',
-        path: 'ingest',
-        component: () => import('#/views/kb/ingest/index.vue'),
-        meta: {
-          authority: ['gov', 'admin', 'dev'],
-          icon: 'lucide:upload-cloud',
-          title: '知识接入',
-        },
-      },
-      {
-        name: 'KbImpact',
-        path: 'impact',
-        component: () => import('#/views/kb/impact/index.vue'),
-        meta: {
-          icon: 'lucide:git-branch',
-          title: '影响分析与代码生成',
-        },
-      },
-      {
-        name: 'KbCodeTree',
-        path: 'code-tree',
-        component: () => import('#/views/kb/code-tree/index.vue'),
-        meta: {
-          icon: 'lucide:folder-tree',
-          title: '代码树与注释',
-        },
-      },
+
+      /* 兼容旧入口（不进菜单） */
       {
         name: 'KbAnnotate',
         path: 'annotate',
@@ -156,7 +205,6 @@ const routes: RouteRecordRaw[] = [
         },
       },
       {
-        // 兼容旧入口 /kb/prompts
         name: 'KbPromptsLegacy',
         path: 'prompts',
         redirect: '/config/prompts',
@@ -167,12 +215,13 @@ const routes: RouteRecordRaw[] = [
         },
       },
       {
-        name: 'KbSystem',
-        path: 'system',
-        component: () => import('#/views/kb/system/index.vue'),
+        name: 'KnowledgeGraphAlias',
+        path: '/knowledge/graph',
+        redirect: '/kb/graph',
         meta: {
-          icon: 'lucide:settings-2',
-          title: '系统状态',
+          hideInMenu: true,
+          hideInTab: true,
+          title: '知识图谱',
         },
       },
     ],

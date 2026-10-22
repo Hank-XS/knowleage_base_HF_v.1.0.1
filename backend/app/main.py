@@ -18,16 +18,23 @@ app = FastAPI(title=settings.app_name, version="1.0.0-demo",
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5666", "http://127.0.0.1:5666"],
-    allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+    # 局域网 IP / 多入口访问时放宽；鉴权走 Authorization header，不依赖 cookie
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
 @app.middleware("http")
-async def trace_middleware(request: Request, call_next):
+async def security_headers_middleware(request: Request, call_next):
     request.state.trace_id = request.headers.get("X-Trace-Id") or f"tr_{uuid.uuid4().hex[:10]}"
     resp = await call_next(request)
     resp.headers["X-Trace-Id"] = request.state.trace_id
+    # Checkmarx Missing_HSTS：须为单行 header 值
+    resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
     return resp
 
 

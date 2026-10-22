@@ -32,14 +32,6 @@ const MOCK_USER_OPTIONS: BasicOption[] = [
   },
 ];
 
-/** 各演示账号的默认口令（选择账号时自动带出） */
-const ACCOUNT_PASSWORDS: Record<string, string> = {
-  admin: 'admin123',
-  biz01: 'biz123456',
-  dev01: 'dev123456',
-  gov01: 'gov123456',
-};
-
 const formSchema = computed((): VbenFormSchema[] => {
   return [
     {
@@ -68,8 +60,9 @@ const formSchema = computed((): VbenFormSchema[] => {
               (item) => item.value === values.selectAccount,
             );
             if (findUser) {
+              // 仅回填用户名；口令由用户输入，避免源码硬编码凭证
               form.setValues({
-                password: ACCOUNT_PASSWORDS[findUser.value] ?? 'dev123456',
+                password: '',
                 username: findUser.value,
               });
             }

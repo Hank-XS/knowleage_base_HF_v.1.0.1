@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>某行核心系统迁移知识库 — 详细设计文档</title>
+<style>
+:root {
+  --bg: #f7f8fa;
+  --card: #ffffff;
+  --text: #1f2329;
+  --muted: #646a73;
+  --border: #e5e6eb;
+  --accent: #0b5fff;
+  --code-bg: #f2f3f5;
+  --th-bg: #f0f4ff;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--text);
+  background: linear-gradient(180deg, #eef3ff 0%, var(--bg) 240px);
+  line-height: 1.7;
+}
+.wrap {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+}
+header.doc-header {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px 32px;
+  margin-bottom: 28px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+header.doc-header h1 {
+  margin: 0 0 8px;
+  font-size: 1.75rem;
+  letter-spacing: -0.02em;
+}
+header.doc-header .meta {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+nav.toc {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin-bottom: 28px;
+}
+nav.toc h2 {
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+}
+nav.toc ul {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+nav.toc li { margin: 4px 0; }
+nav.toc a {
+  color: var(--accent);
+  text-decoration: none;
+}
+nav.toc a:hover { text-decoration: underline; }
+article {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px 36px 40px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+}
+article > h1:first-child { display: none; }
+article h2 {
+  margin-top: 2em;
+  padding-bottom: 0.35em;
+  border-bottom: 1px solid var(--border);
+  font-size: 1.35rem;
+}
+article h2:first-of-type { margin-top: 0; }
+article h3 { margin-top: 1.5em; font-size: 1.15rem; }
+article h4 { margin-top: 1.2em; font-size: 1.05rem; }
+article .table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  margin: 1em 0 1.4em;
+}
+article table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+  min-width: 520px;
+}
+article th, article td {
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  vertical-align: top;
+  word-wrap: break-word;
+}
+article th {
+  background: var(--th-bg);
+  text-align: left;
+  font-weight: 600;
+}
+article tr:nth-child(even) td { background: #fafbfc; }
+article code {
+  background: var(--code-bg);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-family: Consolas, "SF Mono", Menlo, monospace;
+  font-size: 0.9em;
+}
+article pre {
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 14px 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+article pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+article blockquote {
+  margin: 1em 0;
+  padding: 0.6em 1em;
+  border-left: 4px solid var(--accent);
+  background: #f5f8ff;
+  color: var(--muted);
+}
+article hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2em 0;
+}
+article ul, article ol { padding-left: 1.4rem; }
+article li { margin: 0.25em 0; }
+footer {
+  margin-top: 24px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+@media print {
+  body { background: white; }
+  .wrap { max-width: none; padding: 0; }
+  header.doc-header, article, nav.toc {
+    box-shadow: none;
+    border: none;
+    border-radius: 0;
+  }
+  nav.toc { page-break-after: always; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="doc-header">
+    <h1>某行核心系统迁移知识库 — 详细设计文档</h1>
+    <div class="meta">版本 V1.0 · 2026年10月 · 依据技术方案 V1.0</div>
+  </header>
+  <nav class="toc"><h2>目录</h2><ul><li style="margin-left:0px"><a href="#1-设计目标与范围">1. 设计目标与范围</a></li><li style="margin-left:16px"><a href="#11-目标">1.1 目标</a></li><li style="margin-left:16px"><a href="#12-四个月交付边界">1.2 四个月交付边界</a></li><li style="margin-left:16px"><a href="#13-设计原则与技术方案一致">1.3 设计原则（与技术方案一致）</a></li><li style="margin-left:16px"><a href="#14-与现有工程映射">1.4 与现有工程映射</a></li><li style="margin-left:0px"><a href="#2-总体架构">2. 总体架构</a></li><li style="margin-left:16px"><a href="#21-七层架构">2.1 七层架构</a></li><li style="margin-left:16px"><a href="#22-端到端数据流关键约束">2.2 端到端数据流（关键约束）</a></li><li style="margin-left:16px"><a href="#23-在线问答推理形态">2.3 在线问答推理形态</a></li><li style="margin-left:0px"><a href="#3-数据接入与解析设计">3. 数据接入与解析设计</a></li><li style="margin-left:16px"><a href="#31-数据源与适配器">3.1 数据源与适配器</a></li><li style="margin-left:16px"><a href="#32-代码解析">3.2 代码解析</a></li><li style="margin-left:16px"><a href="#33-文档解析">3.3 文档解析</a></li><li style="margin-left:16px"><a href="#34-知识模型图">3.4 知识模型（图）</a></li><li style="margin-left:0px"><a href="#4-知识生成设计">4. 知识生成设计</a></li><li style="margin-left:16px"><a href="#41-编排">4.1 编排</a></li><li style="margin-left:16px"><a href="#42-分层产出">4.2 分层产出</a></li><li style="margin-left:16px"><a href="#43-程序知识文档模板必含章节">4.3 程序知识文档模板（必含章节）</a></li><li style="margin-left:16px"><a href="#44-提示词约束硬性">4.4 提示词约束（硬性）</a></li><li style="margin-left:0px"><a href="#5-核验与人工确认设计">5. 核验与人工确认设计</a></li><li style="margin-left:16px"><a href="#51-自动核验规则mvp-清单">5.1 自动核验规则（MVP 清单）</a></li><li style="margin-left:16px"><a href="#52-审核工作台">5.2 审核工作台</a></li><li style="margin-left:16px"><a href="#53-来源门禁">5.3 来源门禁</a></li><li style="margin-left:0px"><a href="#6-知识存储设计">6. 知识存储设计</a></li><li style="margin-left:16px"><a href="#61-组件职责">6.1 组件职责</a></li><li style="margin-left:16px"><a href="#62-关键关系表postgresql">6.2 关键关系表（PostgreSQL）</a></li><li style="margin-left:16px"><a href="#63-对象路径规范">6.3 对象路径规范</a></li><li style="margin-left:0px"><a href="#7-服务层与接口设计">7. 服务层与接口设计</a></li><li style="margin-left:16px"><a href="#71-统一约定">7.1 统一约定</a></li><li style="margin-left:16px"><a href="#72-核心-rest本期">7.2 核心 REST（本期）</a></li><li style="margin-left:16px"><a href="#73-agent-工具正式结论禁用自由-text2cypher">7.3 Agent 工具（正式结论禁用自由 Text2Cypher）</a></li><li style="margin-left:16px"><a href="#74-影响分析模板示例">7.4 影响分析模板（示例）</a></li><li style="margin-left:0px"><a href="#8-应用层设计">8. 应用层设计</a></li><li style="margin-left:16px"><a href="#81-智能问答">8.1 智能问答</a></li><li style="margin-left:16px"><a href="#82-耦合度与解耦评估本期深度mvp">8.2 耦合度与解耦评估（本期深度：MVP）</a></li><li style="margin-left:16px"><a href="#83-可视化">8.3 可视化</a></li><li style="margin-left:16px"><a href="#84-重构支撑第-4-月试点">8.4 重构支撑（第 4 月试点）</a></li><li style="margin-left:0px"><a href="#9-安全合规与部署">9. 安全、合规与部署</a></li><li style="margin-left:16px"><a href="#91-私有化">9.1 私有化</a></li><li style="margin-left:16px"><a href="#92-权限与审计">9.2 权限与审计</a></li><li style="margin-left:16px"><a href="#93-逻辑部署4-个月目标拓扑">9.3 逻辑部署（4 个月目标拓扑）</a></li><li style="margin-left:0px"><a href="#10-demo2-周范围与验收">10. Demo（≤2 周）范围与验收</a></li><li style="margin-left:16px"><a href="#101-场景">10.1 场景</a></li><li style="margin-left:16px"><a href="#102-必演示能力">10.2 必演示能力</a></li><li style="margin-left:16px"><a href="#103-验收指标demo">10.3 验收指标（Demo）</a></li><li style="margin-left:0px"><a href="#11-非功能需求">11. 非功能需求</a></li><li style="margin-left:0px"><a href="#12-风险设计对策摘要">12. 风险设计对策（摘要）</a></li><li style="margin-left:0px"><a href="#附录-a-术语">附录 A 术语</a></li><li style="margin-left:0px"><a href="#附录-b-程序知识文档模板目录级">附录 B 程序知识文档模板（目录级）</a></li><li style="margin-left:0px"><a href="#附录-c-接口错误码节选">附录 C 接口错误码（节选）</a></li></ul></nav>
+  <article>
+<h1>某行核心系统迁移知识库 — 详细设计文档</h1>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>项目</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>文档名称</td>
+<td>某行核心系统迁移知识库详细设计文档</td>
+</tr>
+<tr>
+<td>版本</td>
+<td>V1.0</td>
+</tr>
+<tr>
+<td>日期</td>
+<td>2026 年 10 月</td>
+</tr>
+<tr>
+<td>依据</td>
+<td>《汇丰银行核心系统迁移知识库技术方案》V1.0；《某行需求分析文档》V0.1；现有 Demo 工程 <code>kb-system</code></td>
+</tr>
+<tr>
+<td>项目周期</td>
+<td>4 个月（含第 1–2 周 Demo）</td>
+</tr>
+<tr>
+<td>说明</td>
+<td>本文把技术方案落实为可开发、可验收的模块/接口/数据/部署设计；示例数据以开源 CardDemo 与 ATM 场景为准</td>
+</tr>
+</tbody>
+</table></div>
+<hr>
+<h2 id="1-设计目标与范围">1. 设计目标与范围</h2>
+<h3 id="11-目标">1.1 目标</h3>
+<p>支撑「AI 梳旧 → 建知识库 → 解耦评估 → 分布式重构迁移」路径，交付可私有化部署的迁移知识库：</p>
+<ol>
+<li><strong>迁移有依据</strong>：结论可追溯到源码行或文档定位符。  </li>
+<li><strong>重构可验证</strong>：新旧行为差异可测、可登记。  </li>
+<li><strong>知识可沉淀</strong>：结构事实靠解析器，语义靠大模型，最终确认靠人。</li>
+</ol>
+<h3 id="12-四个月交付边界">1.2 四个月交付边界</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>纳入本周期</th>
+<th>不纳入本周期（后续）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CardDemo / ATM 全链路 Demo（2 周内）</td>
+<td>全行千万行全量知识化</td>
+</tr>
+<tr>
+<td>解析扩展（JCL/SQL/CICS/常量传播）MVP</td>
+<td>运行时 SMF/CICS 监控全量接入</td>
+</tr>
+<tr>
+<td>知识生成流水线（分层 Agent）+ 自动核验</td>
+<td>领域模型微调</td>
+</tr>
+<tr>
+<td>审核工作台 + 来源/置信度</td>
+<td>多国家/地区细粒度数据主权隔离深化</td>
+</tr>
+<tr>
+<td>GraphRAG 问答、影响分析、基础可视化</td>
+<td>完整 CBM Lens 产品化改造</td>
+</tr>
+<tr>
+<td>增量更新与版本快照 MVP</td>
+<td>大规模并行重构工厂</td>
+</tr>
+<tr>
+<td>1 个试点模块 Java 骨架生成 + 规则级等价性样例</td>
+<td>生产并行切流</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="13-设计原则与技术方案一致">1.3 设计原则（与技术方案一致）</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>原则</th>
+<th>设计落点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>结构事实靠解析器</td>
+<td>调用/读写/作业绑定仅由 parser 写入；LLM 不得增删调用边</td>
+</tr>
+<tr>
+<td>语义解释靠大模型</td>
+<td>功能说明、业务规则候选、流程图在结构事实约束下生成</td>
+</tr>
+<tr>
+<td>最终确认靠人</td>
+<td><code>review_status</code> 门禁；未确认知识不可作迁移依据</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="14-与现有工程映射">1.4 与现有工程映射</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>技术方案层次</th>
+<th>本工程模块（现状/目标）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>① 数据接入</td>
+<td><code>ingest/pipeline.py</code>、<code>hf_data/</code>、知识管理上传 API</td>
+</tr>
+<tr>
+<td>② 确定性解析</td>
+<td><code>ingest/parsers.py</code>、<code>code_tree.py</code>；扩展 codegraph fork</td>
+</tr>
+<tr>
+<td>③ 知识生成</td>
+<td><code>ingest/tagger.py</code>、<code>support_annotate.py</code>、PI Agent 流水线</td>
+</tr>
+<tr>
+<td>④ 核验</td>
+<td>治理工作台 + 规则引擎（本期补齐）</td>
+</tr>
+<tr>
+<td>⑤ 存储</td>
+<td>Neo4j / Milvus / PG / MinIO；Demo 可回退 SQLite/文件图</td>
+</tr>
+<tr>
+<td>⑥ 服务</td>
+<td>FastAPI <code>/api/v1/*</code>、MCP Tools</td>
+</tr>
+<tr>
+<td>⑦ 应用</td>
+<td>前端问答/治理/影响分析/知识管理</td>
+</tr>
+</tbody>
+</table></div>
+<hr>
+<h2 id="2-总体架构">2. 总体架构</h2>
+<h3 id="21-七层架构">2.1 七层架构</h3>
+<pre><code>┌─────────────────────────────────────────────────────────┐
+│ ⑦ 应用层  问答 / 影响分析 / 耦合评估 / 可视化 / 重构辅助 │
+├─────────────────────────────────────────────────────────┤
+│ ⑥ 服务层  知识 API · Agent 工具集 · 鉴权审计 · MCP      │
+├─────────────────────────────────────────────────────────┤
+│ ⑤ 存储层  Neo4j(+向量/全文) · PostgreSQL · MinIO        │
+├─────────────────────────────────────────────────────────┤
+│ ④ 核验层  规则引擎 · 审核队列 · 来源/置信度门禁         │
+├─────────────────────────────────────────────────────────┤
+│ ③ 知识生成  PI Agent · 分层流水线 · 模板化 Markdown     │
+├─────────────────────────────────────────────────────────┤
+│ ② 解析层  codegraph(+大型机扩展) · MinerU/Docling       │
+├─────────────────────────────────────────────────────────┤
+│ ① 接入层  源码只读镜像 · 文档仓库 · 工单/元数据导入     │
+└─────────────────────────────────────────────────────────┘
+        ↕ 横切：RBAC · 审计 · 版本 · 私有化隔离
+</code></pre>
+<h3 id="22-端到端数据流关键约束">2.2 端到端数据流（关键约束）</h3>
+<ol>
+<li>解析产出 <strong>结构事实 JSON</strong> → 写入图（<code>source=parser</code>）。  </li>
+<li>结构事实注入 Agent 上下文 → 生成知识文档 / 规则候选。  </li>
+<li>自动核验（关系一致性、出处存在性、Mermaid 边合法性等）。  </li>
+<li>失败/低置信 → 审核队列；通过 → 可检索；<strong>专家确认</strong> → 可作迁移依据。  </li>
+<li>问答优先检索 <code>review_status ∈ {auto_passed, confirmed}</code>；影响分析 <strong>仅图遍历</strong>，LLM 只整理报告。</li>
+</ol>
+<h3 id="23-在线问答推理形态">2.3 在线问答推理形态</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>形态</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Demo / 前 6 周</td>
+<td><strong>单一 Flow</strong></td>
+<td>问题分析 → 指纹分流 → 多路检索 → 重排 → LLM 综合 → 溯源作答</td>
+</tr>
+<tr>
+<td>中后期可切换</td>
+<td><strong>Agent 动态编排</strong></td>
+<td>同一套 Tools（<code>search_knowledge</code> / <code>graph_query</code> / <code>read_source</code>），不重构工具层</td>
+</tr>
+</tbody>
+</table></div>
+<hr>
+<h2 id="3-数据接入与解析设计">3. 数据接入与解析设计</h2>
+<h3 id="31-数据源与适配器">3.1 数据源与适配器</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>类别</th>
+<th>内容</th>
+<th>适配器 ID</th>
+<th>优先级（Demo）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>代码资产</td>
+<td>COBOL、copybook、JCL/PROC、CSD、BMS、DDL</td>
+<td><code>code_cobol</code> / <code>code_jcl</code> / <code>code_csd</code></td>
+<td>P0</td>
+</tr>
+<tr>
+<td>技术文档</td>
+<td>架构、接口、运维手册</td>
+<td><code>doc_tech</code></td>
+<td>P0</td>
+</tr>
+<tr>
+<td>业务文档</td>
+<td>SRS、流程图、规则说明</td>
+<td><code>doc_biz</code></td>
+<td>P1</td>
+</tr>
+<tr>
+<td>映射/报文</td>
+<td>mapping、错误码表、样例报文</td>
+<td><code>mapping</code> / <code>errcode</code> / <code>message</code></td>
+<td>P0（ATM）</td>
+</tr>
+<tr>
+<td>工单</td>
+<td>缺陷/变更</td>
+<td><code>ticket</code></td>
+<td>P2</td>
+</tr>
+<tr>
+<td>运行时（可选）</td>
+<td>SMF、CICS 监控</td>
+<td><code>runtime</code></td>
+<td>P3</td>
+</tr>
+</tbody>
+</table></div>
+<p>接入流水线：<code>scan → parse → clean → tag → review → merge → index</code>，任务状态落 PostgreSQL（Demo 可用 SQLite）。</p>
+<h3 id="32-代码解析">3.2 代码解析</h3>
+<h4 id="321-基础能力codegraph-fork">3.2.1 基础能力（codegraph fork）</h4>
+<ul>
+<li>tree-sitter COBOL：Program / Paragraph / PERFORM·GO TO / CALL 字面量 / COPY / 数据项 / EXEC CICS LINK·XCTL（字面量）。  </li>
+<li>固定版本、关闭遥测、断网容器运行。</li>
+</ul>
+<h4 id="322-大型机扩展本期必做">3.2.2 大型机扩展（本期必做）</h4>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>扩展</th>
+<th>输入</th>
+<th>输出事实</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SQL 表访问</td>
+<td><code>EXEC SQL … END-EXEC</code></td>
+<td><code>Program -[:READS|WRITES|UPDATES]→ Table</code></td>
+</tr>
+<tr>
+<td>文件↔JCL</td>
+<td>FILE-CONTROL / OPEN + DD</td>
+<td><code>Program -[:READS|…]→ Dataset</code>，含 <code>ddname/mode/dsn</code></td>
+</tr>
+<tr>
+<td>JCL/PROC</td>
+<td>JOB/EXEC/DD、PROC 展开</td>
+<td><code>Job-HAS_STEP-JobStep-RUNS-Program</code>、<code>BINDS Dataset</code></td>
+</tr>
+<tr>
+<td>CICS CSD/BMS</td>
+<td>交易定义、屏幕宏</td>
+<td><code>Transaction -[:ENTRY]→ Program</code></td>
+</tr>
+<tr>
+<td>动态调用常量传播</td>
+<td>MOVE 常量链 → XCTL/LINK 变量</td>
+<td><code>XCTL/LINK</code> 边 + <code>resolved_by=const_propagation</code>；无法解析标 <code>dynamic_unresolved</code></td>
+</tr>
+</tbody>
+</table></div>
+<h4 id="323-事实记录格式示意">3.2.3 事实记录格式（示意）</h4>
+<pre><code class="language-json">{
+  &quot;job&quot;: &quot;INTCALC&quot;,
+  &quot;step&quot;: &quot;STEP15&quot;,
+  &quot;pgm&quot;: &quot;CBACT04C&quot;,
+  &quot;binds&quot;: [
+    {&quot;ddname&quot;: &quot;ACCTFILE&quot;, &quot;dsn&quot;: &quot;AWS.M2.CARDDEMO.ACCTDATA.VSAM.KSDS&quot;, &quot;disp&quot;: &quot;SHR&quot;}
+  ],
+  &quot;source&quot;: &quot;parser&quot;,
+  &quot;evidence&quot;: [&quot;CBACT04C.cbl:42-44&quot;, &quot;INTCALC.jcl:STEP15&quot;]
+}
+</code></pre>
+<h3 id="33-文档解析">3.3 文档解析</h3>
+<ul>
+<li>首选 MinerU（带 doc/page/block 定位符）；备选 Docling；扫描件补 PaddleOCR。  </li>
+<li>架构图图片：多模态识读，<code>source=llm</code>，进入核验。  </li>
+<li>输出统一 <code>locator</code> + Markdown 片段，进入 Chunk 向量化。</li>
+</ul>
+<h3 id="34-知识模型图">3.4 知识模型（图）</h3>
+<p><strong>实体（节选）</strong>：Subsystem、Program、Paragraph、Copybook、Table、Dataset、Job、JobStep、Transaction、BusinessRule、Chunk。  </p>
+<p><strong>关系（节选）</strong>：CALLS / XCTL / LINK、PERFORMS、READS / WRITES / UPDATES、RUNS / HAS_STEP / BINDS、ENTRY、IMPLEMENTED_BY、DESCRIBES。  </p>
+<p><strong>统一元属性</strong>（节点与边）：</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>属性</th>
+<th>取值</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>source</td>
+<td>parser / llm / human</td>
+<td>来源分级</td>
+</tr>
+<tr>
+<td>confidence</td>
+<td>high / medium / low</td>
+<td>展示与门禁</td>
+</tr>
+<tr>
+<td>evidence</td>
+<td><code>file:line</code> 或 locator</td>
+<td>溯源</td>
+</tr>
+<tr>
+<td>review_status</td>
+<td>pending / auto_passed / confirmed / rejected</td>
+<td>可检索/可依据</td>
+</tr>
+</tbody>
+</table></div>
+<hr>
+<h2 id="4-知识生成设计">4. 知识生成设计</h2>
+<h3 id="41-编排">4.1 编排</h3>
+<ul>
+<li>外层流水线按「段落 → 程序 → 作业/交易 → 子系统」切任务；每任务独立 Agent 会话，可并行、可重跑。  </li>
+<li>Agent 运行时：PI（MIT）或等价 OpenAI 兼容 Agent；工具只读（图查询、读源码片段）。  </li>
+<li>断网容器：只挂载任务所需只读源码与结构事实。</li>
+</ul>
+<h3 id="42-分层产出">4.2 分层产出</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>层</th>
+<th>输入</th>
+<th>输出</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>L1 段落</td>
+<td>段落源码 + PERFORM 邻居</td>
+<td>段落功能说明</td>
+</tr>
+<tr>
+<td>L2 程序</td>
+<td>L1 + 文件/调用/作业事实</td>
+<td>程序知识文档（模板见附录）</td>
+</tr>
+<tr>
+<td>L3 作业/交易</td>
+<td>L2 汇总</td>
+<td>作业/交易说明、数据血缘摘要</td>
+</tr>
+<tr>
+<td>L4 子系统</td>
+<td>L3 + 聚类</td>
+<td>子系统概览、耦合线索</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="43-程序知识文档模板必含章节">4.3 程序知识文档模板（必含章节）</h3>
+<ol>
+<li>基本信息（类型、作业/交易、LOC、copybook）  </li>
+<li>功能概述  </li>
+<li>输入输出表（<strong>仅来自解析事实</strong>）  </li>
+<li>处理流程图（Mermaid，节点名必须存在于事实）  </li>
+<li>业务规则候选（编号、描述、出处、置信度）  </li>
+<li>迁移注意点 / 疑点  </li>
+<li>来源与审核状态</li>
+</ol>
+<h3 id="44-提示词约束硬性">4.4 提示词约束（硬性）</h3>
+<ul>
+<li>不得增删结构事实中的调用与文件访问。  </li>
+<li>每条结论必须有 <code>[file:start-end]</code>；无出处不写。  </li>
+<li>不确定标「待确认」；可疑代码进「疑点」。</li>
+</ul>
+<hr>
+<h2 id="5-核验与人工确认设计">5. 核验与人工确认设计</h2>
+<h3 id="51-自动核验规则mvp-清单">5.1 自动核验规则（MVP 清单）</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>编号</th>
+<th>规则</th>
+<th>失败处置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>V-REL</td>
+<td>Mermaid/文档中的调用边必须存在于依赖图</td>
+<td>入审核队列</td>
+</tr>
+<tr>
+<td>V-IO</td>
+<td>文档 IO 表与解析事实集合一致</td>
+<td>入审核队列</td>
+</tr>
+<tr>
+<td>V-EVD</td>
+<td>引用行号落在文件真实行范围内</td>
+<td>入审核队列</td>
+</tr>
+<tr>
+<td>V-ID</td>
+<td>实体名可在全文/图中解析</td>
+<td>降置信或驳回草稿</td>
+</tr>
+<tr>
+<td>V-DUP</td>
+<td>疑点重复拼接/空实现等启发式</td>
+<td>写入疑点区，不阻断</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="52-审核工作台">5.2 审核工作台</h3>
+<ul>
+<li>队列排序：依赖图中心度 × 变更频率 × 历史缺陷（有则加权）。  </li>
+<li>界面：左知识文档 / 右源码（跳行） / 下依赖子图。  </li>
+<li>动作：确认、修改后确认、驳回（原因码）、转交；全量审计。  </li>
+<li>反馈：驳回原因统计 → 反哺提示词与规则。</li>
+</ul>
+<h3 id="53-来源门禁">5.3 来源门禁</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>来源</th>
+<th>可作迁移依据</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>parser</td>
+<td>是</td>
+</tr>
+<tr>
+<td>llm + auto_passed</td>
+<td>参考；关键规则需 human</td>
+</tr>
+<tr>
+<td>llm 未审核/失败</td>
+<td>否（界面显著标注）</td>
+</tr>
+<tr>
+<td>human</td>
+<td>是</td>
+</tr>
+</tbody>
+</table></div>
+<hr>
+<h2 id="6-知识存储设计">6. 知识存储设计</h2>
+<h3 id="61-组件职责">6.1 组件职责</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>组件</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Neo4j</td>
+<td>依赖图、语义节点、Chunk 向量索引、标识符全文索引（whitespace，保护 <code>ACCT-UPDATE</code>）</td>
+</tr>
+<tr>
+<td>PostgreSQL</td>
+<td>用户权限、审核流、版本、流水线任务、核验结果、问答审计、已验证答案</td>
+</tr>
+<tr>
+<td>MinIO</td>
+<td>源码快照、原文、解析中间件、知识 MD、图快照</td>
+</tr>
+<tr>
+<td>（备选）Milvus</td>
+<td>若向量与图分离部署时承载多集合向量</td>
+</tr>
+</tbody>
+</table></div>
+<p>图访问经 <strong>Repository 接口</strong> 抽象，查询模板使用 openCypher 公共子集，便于 AGE/Memgraph 替换（POC 压测后定稿）。</p>
+<h3 id="62-关键关系表postgresql">6.2 关键关系表（PostgreSQL）</h3>
+<ul>
+<li><code>t_kb_version</code>：版本号、源码 commit、创建时间、操作者  </li>
+<li><code>t_pipeline_task</code>：任务类型、状态、重试、产物路径  </li>
+<li><code>t_review_item</code> / <code>t_review_action</code>：审核队列与留痕  </li>
+<li><code>t_verified_answer</code>：指纹、场景、答案 JSON、status、kb_version（知识变更致 stale）  </li>
+<li><code>t_audit_log</code>：问答/查询/工具调用</li>
+</ul>
+<h3 id="63-对象路径规范">6.3 对象路径规范</h3>
+<pre><code>kb-raw/{date}/{type}/...          # 原始
+kb-derived/{kb_version}/ast/...   # 解析
+kb-derived/{kb_version}/md/...    # 知识文档
+kb-snapshot/{kb_version}/graph/   # 图导出
+</code></pre>
+<hr>
+<h2 id="7-服务层与接口设计">7. 服务层与接口设计</h2>
+<h3 id="71-统一约定">7.1 统一约定</h3>
+<ul>
+<li>Base：<code>/api/v1</code>  </li>
+<li>响应：<code>{ code, message, data, trace_id }</code>  </li>
+<li>鉴权：JWT + RBAC（研发 / 业务 / 治理员 / 管理员等）  </li>
+<li>写操作仅流水线服务账号 + 审核写接口</li>
+</ul>
+<h3 id="72-核心-rest本期">7.2 核心 REST（本期）</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>域</th>
+<th>方法</th>
+<th>路径</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>问答</td>
+<td>POST</td>
+<td><code>/qa/ask</code></td>
+<td>单一 Flow</td>
+</tr>
+<tr>
+<td>问答</td>
+<td>POST</td>
+<td><code>/qa/ask_agent</code></td>
+<td>Agent 工具编排（可选）</td>
+</tr>
+<tr>
+<td>工具</td>
+<td>GET</td>
+<td><code>/qa/tools</code></td>
+<td>工具清单</td>
+</tr>
+<tr>
+<td>检索</td>
+<td>POST</td>
+<td><code>/search/hybrid</code></td>
+<td>向量+全文</td>
+</tr>
+<tr>
+<td>图</td>
+<td>POST</td>
+<td><code>/graph/query</code></td>
+<td>仅预置模板 ID + 参数</td>
+</tr>
+<tr>
+<td>影响</td>
+<td>POST</td>
+<td><code>/impact/analyze</code></td>
+<td>模板 IA-01…</td>
+</tr>
+<tr>
+<td>溯源</td>
+<td>GET</td>
+<td><code>/source/view</code></td>
+<td>文件行片段</td>
+</tr>
+<tr>
+<td>治理</td>
+<td>GET/POST</td>
+<td><code>/governance/review*</code></td>
+<td>队列与动作</td>
+</tr>
+<tr>
+<td>接入</td>
+<td>POST</td>
+<td><code>/ingest/run</code></td>
+<td>触发流水线</td>
+</tr>
+<tr>
+<td>知识管理</td>
+<td>CRUD</td>
+<td><code>/knowledge/docs*</code></td>
+<td>文档/切片/差异/代码树</td>
+</tr>
+<tr>
+<td>版本</td>
+<td>GET</td>
+<td><code>/kb/versions</code></td>
+<td>列表与 diff</td>
+</tr>
+<tr>
+<td>重构辅助</td>
+<td>POST</td>
+<td><code>/codegen/skeleton</code></td>
+<td>Java 骨架（试点）</td>
+</tr>
+<tr>
+<td>系统</td>
+<td>GET</td>
+<td><code>/system/status</code></td>
+<td>存储/模型模式</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="73-agent-工具正式结论禁用自由-text2cypher">7.3 Agent 工具（正式结论禁用自由 Text2Cypher）</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>工具</th>
+<th>能力</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>search_knowledge</code></td>
+<td>混合检索；默认仅已确认/自动核验通过</td>
+</tr>
+<tr>
+<td><code>graph_query</code></td>
+<td>参数化 Cypher 模板</td>
+</tr>
+<tr>
+<td><code>read_source</code></td>
+<td>指定文件行读取</td>
+</tr>
+<tr>
+<td><code>query_cache</code> / <code>save_answer</code></td>
+<td>三级分流长时记忆（与现网一致）</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="74-影响分析模板示例">7.4 影响分析模板（示例）</h3>
+<ul>
+<li><strong>IA-01</strong>：修改 Program → 写出 Dataset → 下游 Job/Program（≤3 跳）  </li>
+<li><strong>IA-02</strong>：修改 Copybook 字段 → 引用 Program 列表  </li>
+<li><strong>IA-03</strong>：修改 Transaction 入口 → 调用扇出  </li>
+<li>动态未解析调用：<strong>必须</strong>在报告「风险提示」单独成节</li>
+</ul>
+<hr>
+<h2 id="8-应用层设计">8. 应用层设计</h2>
+<h3 id="81-智能问答">8.1 智能问答</h3>
+<ul>
+<li>GraphRAG：向量/全文 → 图扩展 → 必要时读源码 → 带出处与置信度作答。  </li>
+<li>答案结构：是什么 / 为什么 / 怎么处理 + sources + caveats + 推理轨迹。  </li>
+<li>指纹三级分流：exact 直出 / similar 参考复用 / miss 实时推理；复核沉淀闭环。</li>
+</ul>
+<h3 id="82-耦合度与解耦评估本期深度mvp">8.2 耦合度与解耦评估（本期深度：MVP）</h3>
+<ul>
+<li>基于图算法（中心度、Louvain 聚类、扇入扇出）输出模块边界建议。  </li>
+<li>报告字段：候选切分、跨边界调用数、共享 Dataset/Copybook、风险等级。  </li>
+<li>Demo 阶段可用预计算 + 简化指标；第 3 月补齐可交互评估页。</li>
+</ul>
+<h3 id="83-可视化">8.3 可视化</h3>
+<ul>
+<li>Demo：调用链/作业-程序-数据集子图（前端 + 简易图 API）。  </li>
+<li>目标：对接 CBM Lens（只读注入；关闭其自动重索引）。</li>
+</ul>
+<h3 id="84-重构支撑第-4-月试点">8.4 重构支撑（第 4 月试点）</h3>
+<ul>
+<li>技术映射表（COBOL→Java 陷阱：截断 vs 四舍五入、REDEFINES、COMP-3 等）。  </li>
+<li>生成带 <code>【人工校验点 V-xx】</code> 的 Java 骨架。  </li>
+<li>等价性：至少规则级参数化单测样例；回放/并行列入试点外延清单。</li>
+</ul>
+<hr>
+<h2 id="9-安全合规与部署">9. 安全、合规与部署</h2>
+<h3 id="91-私有化">9.1 私有化</h3>
+<ul>
+<li>源码、文档、模型、向量全在行内隔离网；无外网出口。  </li>
+<li>镜像与权重离线导入；关闭遥测与远程模型下载。</li>
+</ul>
+<h3 id="92-权限与审计">9.2 权限与审计</h3>
+<ul>
+<li>对接行内统一认证（Demo 可用本地 JWT）。  </li>
+<li>按子系统控制可见性（框架第 2 月落地）。  </li>
+<li>问答、图查、审核、工具调用全量 <code>trace_id</code> 审计。</li>
+</ul>
+<h3 id="93-逻辑部署4-个月目标拓扑">9.3 逻辑部署（4 个月目标拓扑）</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>节点</th>
+<th>组件</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GPU 推理</td>
+<td>私有 LLM + Embedding（OpenAI 兼容，如 vLLM）</td>
+</tr>
+<tr>
+<td>解析/生成 Worker</td>
+<td>codegraph 扩展、Agent 流水线（K8s Job/队列）</td>
+</tr>
+<tr>
+<td>数据面</td>
+<td>Neo4j、PostgreSQL、MinIO</td>
+</tr>
+<tr>
+<td>应用面</td>
+<td>API Gateway、FastAPI、Vue 门户</td>
+</tr>
+<tr>
+<td>Demo 简化</td>
+<td>单机 docker-compose 或内嵌回退存储</td>
+</tr>
+</tbody>
+</table></div>
+<hr>
+<h2 id="10-demo2-周范围与验收">10. Demo（≤2 周）范围与验收</h2>
+<h3 id="101-场景">10.1 场景</h3>
+<p>以 <strong>CardDemo 利息计算（CBACT04C / INTCALC）</strong> 与 <strong>ATM 取款/余额</strong> 双场景演示。</p>
+<h3 id="102-必演示能力">10.2 必演示能力</h3>
+<ol>
+<li>源码/JCL/文档接入与解析事实入库（含作业—程序—数据集关联）。  </li>
+<li>生成程序知识文档（含规则 R1–R3 级示例）与出处跳转。  </li>
+<li>自动核验失败样例进审核队列；确认后可检索。  </li>
+<li>问答：利息如何计算、DEFAULT 利率回退；答案带来源行号。  </li>
+<li>影响分析：修改 CBACT04C 影响 ACCTDATA 及下游作业列表。  </li>
+<li>前端：问答台、治理台、知识管理、系统状态可切换 Mock/真实模型。</li>
+</ol>
+<h3 id="103-验收指标demo">10.3 验收指标（Demo）</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>指标</th>
+<th>目标</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>主路径可用性</td>
+<td>上述 6 项端到端可演示，无阻断性缺陷</td>
+</tr>
+<tr>
+<td>结构事实可复现</td>
+<td>同一源码重复解析，关键边集合一致</td>
+</tr>
+<tr>
+<td>问答抽样</td>
+<td>约定 10 题中 ≥7 题「可参考」且出处正确</td>
+</tr>
+<tr>
+<td>安全声明</td>
+<td>展示私有化配置项与数据不落外网说明</td>
+</tr>
+</tbody>
+</table></div>
+<hr>
+<h2 id="11-非功能需求">11. 非功能需求</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>类别</th>
+<th>指标（4 个月目标）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>性能</td>
+<td>CardDemo 全量解析 &lt; 5 min；单次影响分析（≤3 跳）P95 &lt; 3s</td>
+</tr>
+<tr>
+<td>规模验证</td>
+<td>POC 合成放大至约 100 万节点，记录 6 跳查询耗时</td>
+</tr>
+<tr>
+<td>可用性</td>
+<td>API 月度可用率目标 99%（试点环境）</td>
+</tr>
+<tr>
+<td>可观测</td>
+<td>任务、Agent 会话、工具调用可追踪回放</td>
+</tr>
+<tr>
+<td>可替换</td>
+<td>图库 / 文档解析 / LLM 均接口化</td>
+</tr>
+</tbody>
+</table></div>
+<hr>
+<h2 id="12-风险设计对策摘要">12. 风险设计对策（摘要）</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>风险</th>
+<th>设计对策</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>私有模型 COBOL 理解弱</td>
+<td>任务切小 + 强制注入结构事实；多模型对比</td>
+</tr>
+<tr>
+<td>动态调用遗漏</td>
+<td>常量传播 + <code>dynamic_unresolved</code> 强制曝光</td>
+</tr>
+<tr>
+<td>专家瓶颈</td>
+<td>中心度优先队列；审核 UI 直达源码</td>
+</tr>
+<tr>
+<td>开源维护/许可</td>
+<td>fork 固定版本；MinerU/Neo4j 许可前置法务</td>
+</tr>
+<tr>
+<td>老缺陷 vs 特性</td>
+<td>疑点清单 + 重构「保持/修复」显式决策</td>
+</tr>
+</tbody>
+</table></div>
+<hr>
+<h2 id="附录-a-术语">附录 A 术语</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>术语</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>结构事实</td>
+<td>解析器确定性产出的节点与边</td>
+</tr>
+<tr>
+<td>GraphRAG</td>
+<td>向量检索 + 图扩展的增强生成</td>
+</tr>
+<tr>
+<td>单一 Flow</td>
+<td>固定步骤的在线推理链</td>
+</tr>
+<tr>
+<td>kb_version</td>
+<td>与源码快照绑定的知识库版本</td>
+</tr>
+<tr>
+<td>动态未解析</td>
+<td>静态无法确定目标的调用点</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="附录-b-程序知识文档模板目录级">附录 B 程序知识文档模板（目录级）</h2>
+<p>见技术方案附录 B；实现时以仓库内 <code>templates/program_knowledge.md</code> 固化，版本随流水线发布。</p>
+<h2 id="附录-c-接口错误码节选">附录 C 接口错误码（节选）</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>code</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>成功</td>
+</tr>
+<tr>
+<td>40101</td>
+<td>未认证</td>
+</tr>
+<tr>
+<td>40301</td>
+<td>无权限</td>
+</tr>
+<tr>
+<td>40401</td>
+<td>实体不存在</td>
+</tr>
+<tr>
+<td>40901</td>
+<td>审核状态冲突</td>
+</tr>
+<tr>
+<td>42201</td>
+<td>核验未通过不可发布</td>
+</tr>
+<tr>
+<td>50001</td>
+<td>流水线内部错误</td>
+</tr>
+</tbody>
+</table></div>
+<hr>
+<p><strong>文档结束</strong></p>
+  </article>
+  <footer>某行核心系统迁移知识库 · 由 Markdown 自动生成</footer>
+</div>
+</body>
+</html>
