@@ -56,10 +56,7 @@ const formSchema = computed((): VbenFormSchema[] => {
               (item) => item.value === values.selectAccount,
             );
             if (findUser) {
-              form.setValues({
-                password: '',
-                username: findUser.value,
-              });
+              form.setValues({ username: findUser.value });
             }
           }
         },

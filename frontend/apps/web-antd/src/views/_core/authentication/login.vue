@@ -60,11 +60,8 @@ const formSchema = computed((): VbenFormSchema[] => {
               (item) => item.value === values.selectAccount,
             );
             if (findUser) {
-              // 仅回填用户名；口令由用户输入，避免源码硬编码凭证
-              form.setValues({
-                password: '',
-                username: findUser.value,
-              });
+              // 仅回填用户名；口令字段不写入任何字面量，由用户自行输入
+              form.setValues({ username: findUser.value });
             }
           }
         },

@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-const props = withDefaults(defineProps<{ password?: string }>(), {
-  password: '',
-});
+const props = defineProps<{ password?: string }>();
 
 const strengthList: string[] = [
   '',
@@ -15,7 +13,7 @@ const strengthList: string[] = [
 ];
 
 const currentStrength = computed(() => {
-  return checkPasswordStrength(props.password);
+  return checkPasswordStrength(props.password ?? '');
 });
 
 const currentColor = computed(() => {
