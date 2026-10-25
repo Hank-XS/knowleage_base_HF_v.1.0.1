@@ -10,13 +10,13 @@ outline: deep
 
 Before starting the project, ensure that your environment meets the following requirements:
 
-- [Node.js](https://nodejs.org/en) version 22.18.0 or above. It is recommended to use [fnm](https://github.com/Schniz/fnm), [nvm](https://github.com/nvm-sh/nvm), or directly use [pnpm](https://pnpm.io/cli/env) for version management.
+- [Node.js](https://nodejs.org/en) version 25.8.2 or above. It is recommended to use [fnm](https://github.com/Schniz/fnm), [nvm](https://github.com/nvm-sh/nvm), or directly use [pnpm](https://pnpm.io/cli/env) for version management.
 - [Git](https://git-scm.com/) any version.
 
 To verify if your environment meets the above requirements, you can check the versions using the following commands:
 
 ```bash
-# Ensure the correct node LTS version is displayed
+# Ensure Node.js 25.8.2 or above is displayed
 node -v
 # Ensure the correct git version is displayed
 git -v

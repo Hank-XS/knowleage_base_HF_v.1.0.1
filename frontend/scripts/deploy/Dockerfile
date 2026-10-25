@@ -1,4 +1,4 @@
-FROM node:22-slim AS builder
+FROM node:25.8.2-slim AS builder
 
 # --max-old-space-size
 ENV PNPM_HOME="/pnpm"
