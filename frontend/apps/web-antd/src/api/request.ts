@@ -67,6 +67,11 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
 
       config.headers.Authorization = formatToken(accessStore.accessToken);
       config.headers['Accept-Language'] = preferences.app.locale;
+      // Let the browser supply the multipart boundary; the JSON default would
+      // otherwise serialize FormData and discard the uploaded file.
+      if (config.data instanceof FormData) {
+        config.headers['Content-Type'] = undefined;
+      }
       return config;
     },
   });

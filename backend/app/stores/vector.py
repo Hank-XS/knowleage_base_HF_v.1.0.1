@@ -29,20 +29,21 @@ class NumpyVectorStore:
     """内嵌向量索引（list+cosine），JSON 持久化，演示规模足够。"""
 
     def __init__(self) -> None:
-        self._path = DATA_DIR / "vector_store.json"
+        self._path = DATA_DIR / "runtime" / "vector_store.json"
         self._lock = threading.RLock()
         self._data: dict[str, list[dict]] = {c: [] for c in COLLECTIONS}
         self._load()
 
     def _load(self) -> None:
-        if self._path.exists():
-            raw = json.loads(self._path.read_text("utf-8"))
+        source = self._path if self._path.exists() else DATA_DIR / "vector_store.json"
+        if source.exists():
+            raw = json.loads(source.read_text("utf-8"))
             for c in COLLECTIONS:
                 self._data[c] = raw.get(c, [])
 
     def save(self) -> None:
         with self._lock:
-            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            self._path.parent.mkdir(parents=True, exist_ok=True)
             self._path.write_text(json.dumps(self._data, ensure_ascii=False), "utf-8")
 
     def upsert(self, collection: str, chunk_id: str, vector: list[float], metadata: dict) -> None:

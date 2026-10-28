@@ -18,10 +18,12 @@ import {
 } from 'ant-design-vue';
 
 import { listKmLibraries, uploadKmDoc } from '#/api/kb';
+import CodeProjectUpload from './code-project-upload.vue';
 
 defineOptions({ name: 'KnowledgeUpload' });
 
 const route = useRoute();
+const uploadMode = ref(route.query.mode === 'project' ? 'project' : 'document');
 const router = useRouter();
 const kb = ref((route.query.kb as string) || undefined);
 const version = ref<string>('v1.0');
@@ -60,6 +62,10 @@ async function onSubmit() {
     .filter(Boolean);
   if (!files.length) {
     message.warning('请先选择文件');
+    return;
+  }
+  if (files.some((file) => file.name.toLowerCase().endsWith('.zip'))) {
+    message.warning('工程 ZIP 请切换到“代码工程”上传');
     return;
   }
   uploading.value = true;
@@ -109,8 +115,8 @@ onMounted(async () => {
   <Page content-class="km-page">
     <div class="km-upload-head">
       <div>
-        <h2>上传文档</h2>
-        <p class="sub">知识库列表 &gt; 上传文档</p>
+        <h2>上传资料</h2>
+        <p class="sub">知识库列表 &gt; 上传资料</p>
       </div>
       <ASelect
         v-model:value="kb"
@@ -121,7 +127,12 @@ onMounted(async () => {
       />
     </div>
 
-    <div class="km-upload-grid">
+    <ARadioGroup v-model:value="uploadMode" style="margin-bottom: 20px" button-style="solid">
+      <ARadioButton value="document">文档资料</ARadioButton>
+      <ARadioButton value="project">代码工程 ZIP</ARadioButton>
+    </ARadioGroup>
+    <CodeProjectUpload v-if="uploadMode === 'project'" :library="kb" />
+    <div v-else class="km-upload-grid">
       <ACard title="文件上传" class="km-card">
         <p class="hint">请确保文件编码为 UTF-8 格式，否则上传后会产生乱码</p>
         <AUploadDragger
@@ -133,7 +144,7 @@ onMounted(async () => {
           <p class="ant-upload-text">将文件拖拽到此处</p>
           <AButton type="primary" ghost style="margin-top: 8px">选择文件</AButton>
           <p class="ant-upload-hint">
-            单次上传总量 ≤ 5GB；ZIP 内单文件 ≤ 100MB；子目录深度 ≤ 20
+            逐文件上传资料；完整代码工程请使用“代码工程 ZIP”选项
           </p>
         </AUploadDragger>
         <div class="formats">

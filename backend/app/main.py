@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from .config import settings
 from .db import init_db
 from .response import KbError, err
-from .routers import auth, governance, ingest, knowledge, misc, qa
+from .routers import auth, code_projects, governance, ingest, knowledge, misc, qa
 
 app = FastAPI(title=settings.app_name, version="1.0.0-demo",
               docs_url="/docs", openapi_url="/openapi.json")
@@ -61,6 +61,7 @@ app.include_router(governance.router, prefix=P)
 app.include_router(ingest.router, prefix=P)
 app.include_router(knowledge.router, prefix=P)
 app.include_router(misc.router, prefix=P)
+app.include_router(code_projects.router, prefix=P)
 
 
 @app.post(f"{P}/ingest/seed", tags=["ingest"])
@@ -72,6 +73,8 @@ def seed_endpoint(force: bool = False):
 @app.on_event("startup")
 def startup() -> None:
     init_db()
+    from .ingest.code_project import recover_interrupted
+    recover_interrupted()
     from .ingest.tagger import ensure_vocab
     from .prompt_config import ensure_prompt_defaults
     from .seed import seed_knowledge, seed_users

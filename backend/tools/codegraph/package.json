@@ -1,0 +1,9 @@
+{
+  "name": "hf-codegraph-bridge",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pinned CodeGraph runtime for COBOL project ingestion",
+  "dependencies": {
+    "@colbymchenry/codegraph": "1.6.2"
+  }
+}

@@ -8,12 +8,13 @@ LLM 双模式：
   - 配置 KB_LLM_API_KEY 时走 OpenAI 兼容接口（GLM/DeepSeek/Qwen 均可）；
   - 未配置时使用 MockLLM（基于检索证据的模板作答），全链路可演示。
 """
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
+DATA_DIR = Path(os.environ.get('KB_DATA_DIR', str(BASE_DIR / 'data')))
 SEED_DIR = BASE_DIR / "data" / "seed"
 
 

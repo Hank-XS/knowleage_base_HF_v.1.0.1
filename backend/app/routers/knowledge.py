@@ -128,6 +128,8 @@ async def upload_doc(
     content = await file.read()
     if not content:
         raise KbError("40001", "上传文件为空")
+    if (file.filename or '').lower().endswith('.zip'):
+        raise KbError('40001', '工程 ZIP 请使用上传资料中的“代码工程 ZIP”入口')
     try:
         tag_list = json.loads(tags) if tags else []
         if not isinstance(tag_list, list):

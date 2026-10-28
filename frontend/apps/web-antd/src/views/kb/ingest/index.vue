@@ -28,6 +28,7 @@ import {
   listIngestJobs,
   runDatasetClean,
 } from '#/api/kb';
+import ProjectTasks from './project-tasks.vue';
 
 defineOptions({ name: 'KbIngest' });
 
@@ -210,6 +211,7 @@ function fmtTime(t: string) {
 <template>
   <Page>
     <div class="ing-wrap">
+      <ProjectTasks />
       <ACard :body-style="{ padding: '16px 20px' }">
         <div class="ing-title">数据集清洗 · hf_data</div>
         <div class="ing-sub">

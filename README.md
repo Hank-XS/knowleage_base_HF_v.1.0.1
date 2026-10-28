@@ -18,6 +18,8 @@ kb-system/
 
 ## 快速启动（无 Docker / 无 LLM Key 也能跑）
 
+**CodeGraph ZIP 工程解析分支：请优先按 [完整安装、启动与验收说明](docs/CodeGraph安装与启动.md) 操作。** 包含 Windows / macOS / Linux 命令、CodeGraph 独立依赖安装、工程上传验收和运行数据说明。功能范围见 [CodeGraph 工程接入首版](docs/CodeGraph工程接入首版.md)。
+
 双模式设计：未配置任何外部依赖时自动使用内嵌回退（SQLite / 文件图库 / 内嵌向量索引 / 本地对象目录）与 MockLLM（基于检索证据的模板作答），开箱即跑。
 
 ```bash
@@ -28,9 +30,9 @@ copy .env.example .env      # Windows；Linux/macOS 用 cp
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 # 首次启动自动建表并载入 ATM 种子知识（图谱+向量）
 
-# 2) 前端（Node 20+，pnpm）
+# 2) 前端（Node 25.8.2，pnpm 11.16.0；另开终端，从仓库根目录开始）
 cd frontend
-pnpm install
+pnpm install --frozen-lockfile
 pnpm dev:antd               # http://localhost:5666
 ```
 

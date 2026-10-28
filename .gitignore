@@ -39,7 +39,17 @@ Thumbs.db
 # Runtime / local data
 backend/data/runtime/
 backend/data/objects/kb-managed/
+backend/data/objects/kb-raw/projects/
+backend/data/objects/kb-raw/inbox/
 backend/.local/
+.local-runtime/
+.local-tools/
+# SQLite sidecars and CodeGraph-generated indexes
+*.sqlite3-wal
+*.sqlite3-shm
+*.db-wal
+*.db-shm
+.codegraph/
 *.local
 
 # Archives

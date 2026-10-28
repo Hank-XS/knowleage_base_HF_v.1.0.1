@@ -16,10 +16,10 @@ IMPACT_RELS = {"CALLS", "READS", "WRITES", "REALIZED_BY", "IMPLEMENTED_BY", "USE
 
 
 class MemGraphStore:
-    """进程内属性图 + 文件持久化（data/graph_store.json）。"""
+    """进程内属性图；运行结果保存到被 Git 忽略的 data/runtime。"""
 
     def __init__(self) -> None:
-        self._path = DATA_DIR / "graph_store.json"
+        self._path = DATA_DIR / "runtime" / "graph_store.json"
         self._lock = threading.RLock()
         self._nodes: dict[str, dict] = {}
         self._edges: list[dict] = []
@@ -27,14 +27,15 @@ class MemGraphStore:
 
     # ------------------------------------------------------------ persist
     def _load(self) -> None:
-        if self._path.exists():
-            raw = json.loads(self._path.read_text("utf-8"))
+        source = self._path if self._path.exists() else DATA_DIR / "graph_store.json"
+        if source.exists():
+            raw = json.loads(source.read_text("utf-8"))
             self._nodes = {n["id"]: n for n in raw["nodes"]}
             self._edges = raw["edges"]
 
     def save(self) -> None:
         with self._lock:
-            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            self._path.parent.mkdir(parents=True, exist_ok=True)
             self._path.write_text(
                 json.dumps({"nodes": list(self._nodes.values()), "edges": self._edges},
                            ensure_ascii=False), "utf-8")
@@ -63,6 +64,13 @@ class MemGraphStore:
             self._edges = [e for e in self._edges
                            if not (e["src"] == src and (rel is None or e["rel"] == rel)
                                    and (dst is None or e["dst"] == dst))]
+
+    def delete_by_meta(self, key: str, value: str) -> None:
+        """Remove one ingestion snapshot, including incident edges."""
+        with self._lock:
+            ids = {nid for nid, n in self._nodes.items() if n['props'].get(key) == value}
+            self._nodes = {nid: n for nid, n in self._nodes.items() if nid not in ids}
+            self._edges = [e for e in self._edges if e['src'] not in ids and e['dst'] not in ids]
 
     # ------------------------------------------------------------ read
     def node(self, node_id: str) -> dict | None:
@@ -184,6 +192,11 @@ class Neo4jGraphStore(MemGraphStore):
         with self._drv.session() as s:
             s.run(f"MERGE (n:{label} {{kb_id: $id}}) SET n += $p", id=node_id, p=safe)
         return nid
+
+    def delete_by_meta(self, key: str, value: str) -> None:
+        with self._drv.session() as s:
+            s.run('MATCH (n) WHERE n[$key] = $value DETACH DELETE n', key=key, value=value)
+        super().delete_by_meta(key, value)
 
     def upsert_edge(self, src: str, rel: str, dst: str, props: dict | None = None) -> None:
         super().upsert_edge(src, rel, dst, props)

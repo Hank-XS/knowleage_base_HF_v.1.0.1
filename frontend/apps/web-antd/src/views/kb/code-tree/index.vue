@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import { computed, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
@@ -33,6 +34,7 @@ import {
 } from '#/api/kb';
 
 defineOptions({ name: 'KbCodeTree' });
+const router = useRouter();
 
 marked.setOptions({
   gfm: true,
@@ -357,6 +359,7 @@ onMounted(() => {
   <Page>
     <div class="ct-wrap">
       <ACard :body-style="{ padding: '16px 20px' }">
+        <template #extra><AButton @click="router.push('/kb/ingest')">已上传工程与解析结果</AButton></template>
         <div class="ct-title">代码树与注释</div>
         <div class="ct-sub">
           先生成注释并落库，再选式样书类型增强生成；再次打开同一节点会加载已保存结果

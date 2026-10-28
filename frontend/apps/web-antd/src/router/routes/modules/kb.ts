@@ -109,7 +109,7 @@ const routes: RouteRecordRaw[] = [
             meta: {
               icon: 'lucide:upload',
               order: 2,
-              title: '上传文档',
+              title: '上传资料',
             },
           },
           {
@@ -165,7 +165,7 @@ const routes: RouteRecordRaw[] = [
               authority: ['gov', 'admin', 'dev'],
               icon: 'lucide:upload-cloud',
               order: 1,
-              title: '知识接入',
+              title: '接入任务',
             },
           },
           {
@@ -194,6 +194,12 @@ const routes: RouteRecordRaw[] = [
       },
 
       /* 兼容旧入口（不进菜单） */
+      {
+        name: 'CodeProjectDetail',
+        path: '/kb/code-projects/:jobId',
+        component: () => import('#/views/kb/code-projects/index.vue'),
+        meta: { hideInMenu: true, title: '工程解析结果' },
+      },
       {
         name: 'KbAnnotate',
         path: 'annotate',
