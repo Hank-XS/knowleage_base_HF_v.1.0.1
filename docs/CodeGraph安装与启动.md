@@ -7,7 +7,7 @@
 需要 Git、Python 3.11+（本次实测 3.13）、Node.js **25.8.2** 和 pnpm **11.16.0**。前端原有配置要求 Node `^25.8.2`，不要按旧版 README 的 Node 20 安装。Windows x64 已完成实际验证；macOS/Linux 下方提供等价命令，尚未做平台实测。
 
 ```sh
-git clone --branch feat/codegraph-cobol-zip --single-branch https://github.com/liangyefei/knowleage_base_HF_v.1.0.1.git
+git clone --branch feat/codegraph-cobol-zip --single-branch https://github.com/Hank-XS/knowleage_base_HF_v.1.0.1.git
 cd knowleage_base_HF_v.1.0.1
 node --version
 python --version
@@ -15,7 +15,17 @@ npm install -g pnpm@11.16.0
 pnpm --version
 ```
 
-已有仓库时，先保存自己的未提交工作，再执行 `git fetch origin` 和 `git switch --track origin/feat/codegraph-cobol-zip`；已存在本地同名分支则直接切换。以下安装命令都从仓库根目录开始。
+该功能分支发布在 Hank-XS 的 Fork 仓库。已有仓库时，先用 `git remote -v` 确认 `origin` 指向上面的 Fork 地址，再保存自己的未提交工作，执行 `git fetch origin` 和 `git switch --track origin/feat/codegraph-cobol-zip`；已存在本地同名分支则直接切换。
+
+若现有 `origin` 指向原作者 `liangyefei` 的仓库，可以保留该配置，并单独添加 Fork 后拉取：
+
+```sh
+git remote add codegraph-fork https://github.com/Hank-XS/knowleage_base_HF_v.1.0.1.git
+git fetch codegraph-fork
+git switch --track codegraph-fork/feat/codegraph-cobol-zip
+```
+
+以下安装命令都从仓库根目录开始。
 
 ## 2. 安装后端和解析器
 
