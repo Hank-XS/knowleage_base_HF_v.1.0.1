@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
+import pytest
+
+pytestmark = pytest.mark.usefixtures('sample_seed')
 
 os.environ.setdefault("KB_LLM_API_KEY", "")
-_repo = Path(__file__).resolve().parents[2]
-if (_repo / "hf_data").exists():
-    os.environ["KB_DATASET_ROOT"] = str(_repo / "hf_data")
 
 from app.db import init_db  # noqa: E402
 

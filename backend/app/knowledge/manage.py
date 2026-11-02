@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy import func, or_, select
 
+from ..config import settings
 from ..db import (
     KbDocChunk,
     KbDocVersion,
@@ -53,59 +54,11 @@ def _read_text(path: Path) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-def split_chunks(content: str, *, max_len: int = 900) -> list[dict[str, Any]]:
-    """按 Markdown 标题或固定长度切片。"""
+def split_chunks(content: str, *, max_len: int = 1800) -> list[dict[str, Any]]:
+    from ..ingest.documents import markdown_blocks, chunks_from_blocks
     text = (content or "").replace("\r\n", "\n")
-    if not text.strip():
-        return []
-    parts: list[tuple[str, str]] = []
-    # ## 标题分段
-    blocks = re.split(r"(?m)^(#{1,3}\s+.+)$", text)
-    if len(blocks) > 1:
-        cur_title = "正文"
-        buf: list[str] = []
-        for i, blk in enumerate(blocks):
-            if re.match(r"^#{1,3}\s+", blk or ""):
-                if buf:
-                    parts.append((cur_title, "".join(buf).strip()))
-                    buf = []
-                cur_title = re.sub(r"^#{1,3}\s+", "", blk).strip() or "章节"
-            else:
-                buf.append(blk or "")
-        if buf:
-            parts.append((cur_title, "".join(buf).strip()))
-    else:
-        parts = [("全文", text)]
-
-    chunks: list[dict[str, Any]] = []
-    offset = 0
-    idx = 0
-    for title, body in parts:
-        if not body:
-            continue
-        start = 0
-        while start < len(body):
-            piece = body[start : start + max_len]
-            # 尽量在段落边界断开
-            if start + max_len < len(body):
-                cut = piece.rfind("\n\n")
-                if cut > max_len // 3:
-                    piece = piece[:cut]
-            abs_start = text.find(piece, offset)
-            if abs_start < 0:
-                abs_start = offset
-            abs_end = abs_start + len(piece)
-            chunks.append({
-                "chunk_index": idx,
-                "title": title if start == 0 else f"{title} (续)",
-                "text": piece.strip(),
-                "start_offset": abs_start,
-                "end_offset": abs_end,
-            })
-            idx += 1
-            offset = abs_end
-            start += max(len(piece), 1)
-    return [c for c in chunks if c["text"]]
+    chunks = chunks_from_blocks(text, markdown_blocks(text), max_len)
+    return [{k: v for k, v in chunk.items() if k != 'meta_json'} for chunk in chunks]
 
 
 def _ensure_library(
@@ -238,7 +191,8 @@ def sync_from_dataset(force: bool = False) -> dict[str, Any]:
 
 
 def ensure_synced() -> None:
-    sync_from_dataset(force=False)
+    if settings.kb_auto_import:
+        sync_from_dataset(force=False)
 
 
 def library_tree() -> list[dict[str, Any]]:
@@ -262,11 +216,12 @@ def library_tree() -> list[dict[str, Any]]:
                 pass
         # 重新：根节点 = 所有以该 key 开头的文档
         root_counts: dict[str, int] = {}
-        docs = db.execute(select(KbDocument.library_key)).scalars().all()
+        docs = db.execute(select(KbDocument.library_key).where(KbDocument.is_current == 1)).scalars().all()
         for lk in docs:
             root = lk.split("/")[0]
             root_counts[root] = root_counts.get(root, 0) + 1
-            root_counts[lk] = root_counts.get(lk, 0) + 1
+            if lk != root:
+                root_counts[lk] = root_counts.get(lk, 0) + 1
 
         nodes = []
         for lib in libs:
@@ -295,7 +250,7 @@ def _doc_payload(doc: KbDocument, *, content: str | None = None) -> dict[str, An
     payload = {
         "id": doc.id,
         "name": doc.name,
-        "type": doc.doc_type,
+        "type": doc.doc_type.lower(),
         "version": doc.version,
         "status": doc.status,
         "vectorized": bool(doc.vectorized),
@@ -309,6 +264,8 @@ def _doc_payload(doc: KbDocument, *, content: str | None = None) -> dict[str, An
         "sourcePath": doc.source_path,
         "author": doc.author,
         "tags": doc.tags_json or [],
+        "project": doc.project, "purpose": doc.purpose, "asset_type": doc.asset_type,
+        "project_job": doc.project_job, "is_current": bool(doc.is_current),
     }
     if content is not None:
         payload["content"] = content
@@ -325,6 +282,7 @@ def list_docs(
     vectorized: str = "",
     official: str = "",
     security: str = "",
+    project: str = "", project_job: str = "", purpose: str = "", tag: str = "", history: bool = False, asset_type: str = "",
     page: int = 1,
     page_size: int = 10,
 ) -> dict[str, Any]:
@@ -333,6 +291,19 @@ def list_docs(
     page_size = min(max(1, page_size), 100)
     with SessionLocal() as db:
         q = select(KbDocument)
+        if not history:
+            q = q.where(KbDocument.is_current == 1)
+        for field, value in ((KbDocument.project, project), (KbDocument.project_job, project_job), (KbDocument.purpose, purpose), (KbDocument.asset_type, asset_type)):
+            if value:
+                q = q.where(field == value)
+        if tag:
+            if db.get_bind().dialect.name == 'postgresql':
+                from sqlalchemy import cast
+                from sqlalchemy.dialects.postgresql import JSONB
+                q = q.where(cast(KbDocument.tags_json, JSONB).contains([tag]))
+            else:
+                values = func.json_each(KbDocument.tags_json).table_valued('value')
+                q = q.where(select(1).select_from(values).where(values.c.value == tag).exists())
         if kb:
             if "/" in kb:
                 q = q.where(KbDocument.library_key == kb)
@@ -399,6 +370,12 @@ def delete_doc(doc_id: str) -> bool:
         doc = db.get(KbDocument, doc_id)
         if not doc:
             return False
+        from ..stores.graph import graph_store
+        from ..stores.vector import vector_store
+        graph_store.delete_by_meta('doc_id', doc_id)
+        vector_store.delete_by_meta('kb_doc_chunk', 'doc_id', doc_id)
+        graph_store.save()
+        vector_store.save()
         db.query(KbDocChunk).filter(KbDocChunk.doc_id == doc_id).delete()
         db.query(KbDocVersion).filter(KbDocVersion.doc_id == doc_id).delete()
         db.delete(doc)
@@ -422,11 +399,15 @@ def batch_update_status(doc_ids: list[str], status: str) -> int:
 
 def create_library(key: str, title: str, parent_key: str = "") -> dict[str, Any]:
     key = key.strip().replace(" ", "-")
-    if not key:
-        raise ValueError("key required")
+    title = title.strip() or key
+    if not key or len(key) > 128 or len(title) > 100:
+        raise ValueError("系统标识不能为空，系统名称不能超过 100 个字符")
     with SessionLocal() as db:
         if db.get(KbLibrary, key):
             raise ValueError("library exists")
+        siblings = db.scalars(select(KbLibrary).where(KbLibrary.parent_key == (parent_key or '')))
+        if any(row.title.casefold() == title.casefold() for row in siblings):
+            raise ValueError("同一目录已存在此名称的系统／知识库，请直接选择已有系统")
         if parent_key and not db.get(KbLibrary, parent_key):
             raise ValueError("parent not found")
         db.add(KbLibrary(key=key, title=title or key, parent_key=parent_key or ""))
@@ -434,110 +415,9 @@ def create_library(key: str, title: str, parent_key: str = "") -> dict[str, Any]
         return {"key": key, "title": title or key, "parent_key": parent_key or ""}
 
 
-def upload_document(
-    *,
-    filename: str,
-    content: bytes,
-    library_key: str,
-    version: str,
-    security: str = "public",
-    author: str = "admin",
-    tags: list[str] | None = None,
-    official: bool = True,
-    auto_chunk: bool = True,
-) -> dict[str, Any]:
-    ensure_synced()
-    if not version:
-        raise ValueError("version required")
-    text = content.decode("utf-8", errors="replace")
-    name = Path(filename).stem
-    doc_type = Path(filename).suffix.lower().lstrip(".") or "txt"
-    lib = library_key or "uploads"
-    with SessionLocal() as db:
-        if db.get(KbLibrary, lib.split("/")[0]) is None:
-            _ensure_library(db, lib.split("/")[0], lib.split("/")[0], "")
-        if "/" in lib and db.get(KbLibrary, lib) is None:
-            _ensure_library(db, lib, lib.split("/")[-1], lib.split("/")[0])
-
-        rel_path = f"uploads/{lib}/{filename}"
-        existing = db.execute(
-            select(KbDocument).where(
-                KbDocument.library_key == lib,
-                KbDocument.name == name,
-            )
-        ).scalar_one_or_none()
-
-        obj_key = object_store.put(
-            f"kb-managed/{lib}/{filename}", content
-        )
-
-        if existing:
-            # 新版本
-            existing.version = version
-            existing.size_bytes = len(content)
-            existing.object_key = obj_key
-            existing.security = security
-            existing.author = author
-            existing.official = 1 if official else 0
-            existing.tags_json = tags or []
-            existing.status = "draft"
-            existing.vectorized = 0
-            doc = existing
-            # 覆盖同版本或新增
-            ver = db.execute(
-                select(KbDocVersion).where(
-                    KbDocVersion.doc_id == doc.id,
-                    KbDocVersion.version == version,
-                )
-            ).scalar_one_or_none()
-            if ver:
-                ver.content = text
-            else:
-                db.add(KbDocVersion(
-                    doc_id=doc.id, version=version, content=text, created_by=author,
-                ))
-            db.query(KbDocChunk).filter(
-                KbDocChunk.doc_id == doc.id, KbDocChunk.version == version,
-            ).delete()
-        else:
-            doc = KbDocument(
-                library_key=lib,
-                path=rel_path,
-                name=name,
-                doc_type=doc_type,
-                version=version,
-                status="draft",
-                vectorized=0,
-                official=1 if official else 0,
-                security=security,
-                size_bytes=len(content),
-                object_key=obj_key,
-                source_path=rel_path,
-                author=author,
-                tags_json=tags or [],
-            )
-            db.add(doc)
-            db.flush()
-            db.add(KbDocVersion(
-                doc_id=doc.id, version=version, content=text, created_by=author,
-            ))
-
-        if auto_chunk:
-            for ch in split_chunks(text):
-                db.add(KbDocChunk(
-                    doc_id=doc.id,
-                    version=version,
-                    chunk_index=ch["chunk_index"],
-                    title=ch["title"][:256],
-                    text=ch["text"],
-                    start_offset=ch["start_offset"],
-                    end_offset=ch["end_offset"],
-                ))
-            doc.vectorized = 1
-
-        db.commit()
-        db.refresh(doc)
-        return _doc_payload(doc, content=text)
+def upload_document(**kwargs) -> dict[str, Any]:
+    from .document_service import upload_document as ingest_document
+    return ingest_document(**kwargs)
 
 
 def list_chunks(doc_id: str, version: str = "", keyword: str = "") -> dict[str, Any]:
@@ -568,9 +448,11 @@ def list_chunks(doc_id: str, version: str = "", keyword: str = "") -> dict[str, 
                 "start": r.start_offset,
                 "end": r.end_offset,
                 "chunk_index": r.chunk_index,
+                "meta": r.meta_json or {},
             })
         return {
             "doc": _doc_payload(doc),
+            "warnings": (vrow.meta_json or {}).get("warnings", []) if vrow else [],
             "version": ver,
             "content": content,
             "chunks": items,

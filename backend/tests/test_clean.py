@@ -4,14 +4,13 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
+import pytest
+
+pytestmark = pytest.mark.usefixtures('sample_dataset')
 
 os.environ.setdefault("KB_LLM_API_KEY", "")
 
 _tmp = tempfile.mkdtemp(prefix="kbclean_")
-# 指向仓库内 hf_data（若存在）
-_repo_data = Path(__file__).resolve().parents[2] / "hf_data"
-if _repo_data.exists():
-    os.environ["KB_DATASET_ROOT"] = str(_repo_data)
 
 import app.db as db_mod  # noqa: E402
 from app.db import init_db  # noqa: E402

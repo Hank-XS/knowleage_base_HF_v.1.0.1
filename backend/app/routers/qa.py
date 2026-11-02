@@ -1,9 +1,11 @@
 """问答 / 检索 / 溯源 / 复核路由（设计 7.2-7.5 节）。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from datetime import timezone
+
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from ..db import KbVersion, QaMessage, QaSession, SessionLocal, User, VerifiedAnswer
 from ..deps import audit, current_user, require_roles
@@ -41,6 +43,17 @@ def _history(session_id: str) -> list[dict]:
     return out
 
 
+def _owned_session(session_id: str, username: str):
+    with SessionLocal() as db:
+        session = db.get(QaSession, session_id)
+        if session is None or session.user != username:
+            raise KbError('40401', '会话不存在')
+
+
+def _time(value):
+    return value.replace(tzinfo=timezone.utc).isoformat() if value.tzinfo is None else value.isoformat()
+
+
 def _payload(ac) -> dict:
     return {
         "answer_id": ac.answer_id,
@@ -65,10 +78,32 @@ def create_session(request: Request, user: User = Depends(current_user)):
         return ok({"session_id": s.id, "scene_code": s.scene_code}, request)
 
 
+@router.get('/sessions')
+def list_sessions(request: Request, keyword: str = '', page: int = Query(1, ge=1),
+                  page_size: int = Query(20, ge=1, le=100), user: User = Depends(current_user)):
+    counts = select(QaMessage.session_id, func.count().label('message_count'),
+                    func.max(QaMessage.created_at).label('updated_at')).group_by(QaMessage.session_id).subquery()
+    title = select(QaMessage.question).where(QaMessage.session_id == QaSession.id).order_by(
+        QaMessage.created_at, QaMessage.id).limit(1).correlate(QaSession).scalar_subquery()
+    statement = select(QaSession, counts.c.message_count, counts.c.updated_at, title.label('title')).join(
+        counts, counts.c.session_id == QaSession.id).where(QaSession.user == user.username)
+    if keyword.strip():
+        statement = statement.where(select(QaMessage.id).where(
+            QaMessage.session_id == QaSession.id, QaMessage.question.contains(keyword.strip(), autoescape=True)).exists())
+    with SessionLocal() as db:
+        total = db.scalar(select(func.count()).select_from(statement.subquery()))
+        rows = db.execute(statement.order_by(counts.c.updated_at.desc(), QaSession.id).offset(
+            (page - 1) * page_size).limit(page_size)).all()
+        items = [dict(session_id=s.id, title=q[:80], message_count=n,
+                      created_at=_time(s.created_at), updated_at=_time(updated)) for s, n, updated, q in rows]
+    return ok(dict(items=items, total=total, page=page, page_size=page_size), request)
+
+
 @router.post("/ask")
 def ask(body: AskIn, request: Request, user: User = Depends(current_user)):
     if not body.question.strip():
         raise KbError("40001", "question 不能为空")
+    _owned_session(body.session_id, user.username)
     ctx = SessionContext(session_id=body.session_id, user=user.username,
                          question=body.question.strip(), history=_history(body.session_id))
     ac = flow.run(ctx)
@@ -88,6 +123,7 @@ def ask_agent(body: AskAgentIn, request: Request, user: User = Depends(current_u
     """Agent 模式：由模型/启发式自动调度 search_doc/search_code/search_graph 等工具。"""
     if not body.question.strip():
         raise KbError("40001", "question 不能为空")
+    _owned_session(body.session_id, user.username)
     ctx = SessionContext(session_id=body.session_id, user=user.username,
                          question=body.question.strip(), history=_history(body.session_id))
     if body.mode == "flow":
@@ -113,6 +149,9 @@ def qa_tools(request: Request, user: User = Depends(current_user)):
 
 @router.post("/followup")
 def followup(body: FollowupIn, request: Request, user: User = Depends(current_user)):
+    if not body.question.strip():
+        raise KbError('40001', 'question 不能为空')
+    _owned_session(body.session_id, user.username)
     ctx = SessionContext(session_id=body.session_id, user=user.username,
                          question=body.question.strip(), history=_history(body.session_id))
     ac = flow.run(ctx)
@@ -123,13 +162,13 @@ def followup(body: FollowupIn, request: Request, user: User = Depends(current_us
 
 @router.get("/sessions/{session_id}/history")
 def history(session_id: str, request: Request, user: User = Depends(current_user)):
+    _owned_session(session_id, user.username)
     with SessionLocal() as db:
         msgs = db.execute(select(QaMessage).where(QaMessage.session_id == session_id)
-                          .order_by(QaMessage.created_at)).scalars().all()
-    return ok([{"message_id": m.id, "question": m.question, "hit_type": m.hit_type,
-                "answer": (m.payload_json or {}).get("answer", {}),
-                "sources": (m.payload_json or {}).get("sources", []),
-                "created_at": m.created_at.isoformat()} for m in msgs], request)
+                          .order_by(QaMessage.created_at, QaMessage.id)).scalars().all()
+    return ok([{**(m.payload_json or {}), "message_id": m.id, 'answer_id': m.id,
+                "question": m.question, "hit_type": m.hit_type, 'elapsed_ms': 0,
+                "created_at": _time(m.created_at)} for m in msgs], request)
 
 
 @router.get("/answers/{answer_id}/sources")
@@ -206,7 +245,7 @@ def review_answer(answer_id: str, body: ReviewIn, request: Request,
         m = db.get(QaMessage, answer_id)
         if m is None:
             raise KbError("40401", "答案不存在")
-        p = m.payload_json or {}
+        p = dict(m.payload_json or {})
         if body.verdict != "approved":
             p["review_status"] = "rejected"
             m.payload_json = p

@@ -1,6 +1,12 @@
 # Secrets / local env
 .env
 backend/.env
+.env.*
+!**/.env.example
+# Vite's public build settings contain no server secrets.
+!frontend/**/.env.development
+!frontend/**/.env.production
+!frontend/**/.env.analyze
 **/.env.local
 **/.env.*.local
 
@@ -15,6 +21,8 @@ venv/
 .ruff_cache/
 *.db
 *.sqlite3
+*.sqlite
+*.duckdb
 
 # Node / frontend build
 node_modules/
@@ -37,13 +45,26 @@ coverage/
 Thumbs.db
 
 # Runtime / local data
+backend/data/*
+!backend/data/README.md
+hf_data/*
+!hf_data/README.md
 backend/data/runtime/
 backend/data/objects/kb-managed/
 backend/data/objects/kb-raw/projects/
 backend/data/objects/kb-raw/inbox/
 backend/.local/
+.local/
 .local-runtime/
 .local-tools/
+release/
+artifacts/
+test-results/
+playwright-report/
+blob-report/
+.coverage
+htmlcov/
+backend/tests/fixtures/
 # SQLite sidecars and CodeGraph-generated indexes
 *.sqlite3-wal
 *.sqlite3-shm
@@ -56,3 +77,10 @@ backend/.local/
 *.zip
 *.tar
 *.war
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+
+# Original project documents stay local; publish the maintained docs/ sources.
+/*.docx

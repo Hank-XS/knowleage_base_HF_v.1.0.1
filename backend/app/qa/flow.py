@@ -6,7 +6,6 @@ SingleFlowOrchestrator 按固定序列调用注册工具：
 """
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
@@ -167,7 +166,7 @@ class SingleFlowOrchestrator:
         # 4) LLM 整体分析 + 答案生成
         llm = get_llm()
         is_mock = type(llm).__name__ != "ApiLLM"
-        ev_lines = [f"{e.get('ref', '')}｜{e.get('label', '')}｜{(e.get('text', '') or '')[:200]}"
+        ev_lines = [f"{e.get('ref', '')}｜{e.get('label', '')} {e.get('loc', '')}｜{(e.get('text', '') or '')[:1200]}"
                     for e in evidences]
         history_lines = [f"Q: {h.get('question', '')} A: {str(h.get('answer', {}).get('what', ''))[:80]}"
                          for h in ctx.history]
@@ -190,14 +189,8 @@ class SingleFlowOrchestrator:
     # ------------------------------------------------------------ helpers
     @staticmethod
     def _parse_answer(raw: str) -> dict:
-        try:
-            start, end = raw.find("{"), raw.rfind("}")
-            data = json.loads(raw[start:end + 1])
-        except Exception:
-            data = {"what": raw.strip()[:500], "why": "", "how": "",
-                    "caveats": [], "confidence": 0.4, "uncovered": False}
-        return {k: data.get(k, "" if k != "caveats" else []) for k in
-                ("what", "why", "how", "caveats", "confidence", "uncovered")}
+        from .answers import parse_answer
+        return parse_answer(raw)
 
     @staticmethod
     def _sources(evidences: list[dict]) -> list[dict]:

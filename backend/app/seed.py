@@ -100,11 +100,13 @@ def seed_knowledge(force: bool = False) -> dict:
     """把 data/seed 下素材经对象存储 → 离线管线 → 图谱/向量 全链路入库。"""
     if not force and graph_store.stats()["nodes"] > 0:
         return {"skipped": True, "reason": "知识库已有数据"}
+    files = [f for f in sorted(SEED_DIR.rglob("*"))
+             if f.is_file() and f.suffix.lower() in (".csv", ".json", ".md", ".txt", ".cbl")]
+    if not files:
+        return {"skipped": True, "reason": "未提供种子素材"}
     seed_structure()
     counts = {}
-    for f in sorted(SEED_DIR.rglob("*")):
-        if f.suffix.lower() not in (".csv", ".json", ".md", ".txt", ".cbl"):
-            continue
+    for f in files:
         source_type = None
         rel = f.relative_to(SEED_DIR).as_posix()
         if "error_codes" in rel:

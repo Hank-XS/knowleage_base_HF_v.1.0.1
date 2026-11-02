@@ -15,6 +15,7 @@ from ..llm import get_llm
 from ..llm.base import ApiLLM, MockLLM
 from ..qa.flow import AnswerContext, SessionContext
 from ..qa.prompts import build_synthesis_messages
+from ..qa.answers import ANSWER_GUIDANCE, parse_answer
 from .handlers import dumps_result, invoke_tool, openai_tools, tool_retrieve_all
 
 MAX_ROUNDS = 6
@@ -28,9 +29,9 @@ SYSTEM_PROMPT = """你是某行核心系统迁移知识库助手。你必须通�
 4) 影响面问题用 impact_analyze；需要看原文用 preview_source。
 
 最终必须输出严格 JSON：
-{"what":"...","why":"...","how":"...","caveats":[],"confidence":0.0~1.0,"uncovered":false,"used_tools":["..."]}
+{"summary":"直接回答用户的简明答案","what":"...","why":"...","how":"...","caveats":[],"confidence":0.0~1.0,"uncovered":false,"used_tools":["..."]}
 why/how 中引用证据时用［1］［2］编号，对应你检索到的结果顺序。
-"""
+""" + '\n' + ANSWER_GUIDANCE
 
 
 class AgentOrchestrator:
@@ -157,60 +158,14 @@ class AgentOrchestrator:
             return ac
 
         used = ["analyze_question", "query_cache"]
-        ql = q.lower()
-        evidences: list[dict] = []
-
-        # 按问题特征调度工具
-        if any(k in q for k in ("影响", "波及", "修改")) or "impact" in ql:
-            target = (ac.entities[0] if ac.entities else q.split()[0] if q.split() else q)
-            imp = invoke_tool("impact_analyze", {"target": target, "change_summary": q})
-            used.append("impact_analyze")
-            ac.reasoning_trace.append({"step": 3, "tool": "impact_analyze",
-                                       "result": _trace_summary(imp)})
-            evidences.append({
-                "channel": "graph", "ref": target,
-                "label": f"影响面 risk={imp.get('risk_level')}",
-                "text": json.dumps(imp.get("affected") or imp, ensure_ascii=False)[:400],
-                "path": target,
-            })
-
-        need_code = any(k in ql for k in ("program", "cobol", "cbl", "call")) or \
-            any(k in q for k in ("程序", "代码", "调用", "WIREXFR", "PYMAIN", "PYROUTE", "COACT"))
-        need_graph = any(k in q for k in ("关系", "依赖", "图谱", "FR-", "需求", "宇宙")) or bool(ac.entities)
-        need_doc = True
-
-        if need_graph:
-            g = invoke_tool("search_graph", {
-                "query": analysis.get("rewritten") or q,
-                "intent": "impact" if "影响" in q else ac.intent or "business_rule",
-                "entities": ac.entities,
-            })
-            used.append("search_graph")
-            ac.reasoning_trace.append({"step": len(ac.reasoning_trace) + 1, "tool": "search_graph",
-                                       "result": _trace_summary(g)})
-            evidences.extend(_to_ev(g.get("results") or [], "graph"))
-
-        if need_doc:
-            d = invoke_tool("search_doc", {"query": analysis.get("rewritten") or q, "top_k": 5})
-            used.append("search_doc")
-            ac.reasoning_trace.append({"step": len(ac.reasoning_trace) + 1, "tool": "search_doc",
-                                       "result": _trace_summary(d)})
-            evidences.extend(_to_ev(d.get("results") or [], "doc"))
-
-        if need_code:
-            c = invoke_tool("search_code", {"query": analysis.get("rewritten") or q, "top_k": 5})
-            used.append("search_code")
-            ac.reasoning_trace.append({"step": len(ac.reasoning_trace) + 1, "tool": "search_code",
-                                       "result": _trace_summary(c)})
-            evidences.extend(_to_ev(c.get("results") or [], "code"))
-
-        if not evidences:
-            all_hits = tool_retrieve_all(analysis.get("rewritten") or q,
-                                         ac.intent or "business_rule", ac.entities)
-            used.append("retrieve_all")
-            ac.reasoning_trace.append({"step": len(ac.reasoning_trace) + 1, "tool": "retrieve_all",
-                                       "result": _trace_summary(all_hits)})
-            evidences.extend(_to_ev(all_hits.get("results") or [], "doc"))
+        # The model-free path uses the same generic retriever as Flow and MCP.
+        # No project names or business-scene rules decide whether code is searched.
+        retrieved = invoke_tool('retrieve_all', {
+            'query': analysis.get('rewritten') or q,
+            'intent': ac.intent or 'business_rule', 'entities': ac.entities,
+        })
+        used.append('retrieve_all')
+        evidences = _to_ev(retrieved.get('results') or [], 'doc')
 
         return self._finalize_with_evidence(
             ctx, evidences, used, t0,
@@ -229,6 +184,8 @@ class AgentOrchestrator:
         ac = AnswerContext()
         ac.hit_type = hit_type
         ac.similarity = similarity
+        from ..knowledge.retrieval import fuse_and_rerank
+        evidences = fuse_and_rerank(ctx.question, evidences)
         ac.entities = entities or []
         ac.intent = intent or "agent"
         ac.reasoning_trace.append({
@@ -237,7 +194,7 @@ class AgentOrchestrator:
         })
         llm = get_llm()
         is_mock = isinstance(llm, MockLLM)
-        ev_lines = [f"{e.get('ref', '')}｜{e.get('label', '')}｜{(e.get('text', '') or '')[:200]}"
+        ev_lines = [f"{e.get('ref', '')}｜{e.get('label', '')} {e.get('loc', '')}｜{(e.get('text', '') or '')[:1200]}"
                     for e in evidences]
         history_lines = [
             f"Q: {h.get('question', '')} A: {str(h.get('answer', {}).get('what', ''))[:80]}"
@@ -290,14 +247,7 @@ class AgentOrchestrator:
 
 
 def _parse_answer(raw: str) -> dict:
-    try:
-        start, end = raw.find("{"), raw.rfind("}")
-        data = json.loads(raw[start:end + 1])
-    except Exception:
-        data = {"what": (raw or "").strip()[:500], "why": "", "how": "",
-                "caveats": [], "confidence": 0.4, "uncovered": False}
-    return {k: data.get(k, "" if k != "caveats" else []) for k in
-            ("what", "why", "how", "caveats", "confidence", "uncovered")}
+    return parse_answer(raw)
 
 
 def _trace_summary(result: dict) -> str:
@@ -326,6 +276,7 @@ def _to_ev(results: list[dict], default_channel: str) -> list[dict]:
     for r in results:
         out.append({
             "channel": r.get("channel") or default_channel,
+            "kind": r.get("kind", "chunk"),
             "ref": r.get("ref"), "label": r.get("label"),
             "loc": r.get("loc", ""), "obj": r.get("path"),
             "path": r.get("path"), "text": r.get("snippet"),

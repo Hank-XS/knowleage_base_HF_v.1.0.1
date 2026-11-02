@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import os
 import tempfile
+import pytest
+
+pytestmark = pytest.mark.usefixtures('sample_seed')
 
 os.environ.setdefault("KB_LLM_API_KEY", "")
 

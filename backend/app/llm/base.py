@@ -142,10 +142,13 @@ class MockLLM:
 def _mock_answer(payload: dict) -> dict:
     ev: list[dict] = payload.get("evidence", [])
     question: str = payload.get("question", "")
+    if any(e.get('kind') == 'ambiguous_scope' for e in ev):
+        clarification = '找到多个同名文件，请在问题中补充系统或工程名称：\n' + '\n'.join(e.get('text', '') for e in ev if e.get('kind') == 'ambiguous_scope')
+        return dict(summary=clarification, what=clarification, why='', how='', caveats=[], confidence=0, uncovered=True)
     what, why_lines, how_lines = "", [], []
     for i, e in enumerate(ev, start=1):
         label = e.get("label") or e.get("ref") or f"证据{i}"
-        text = (e.get("text") or "")[:180]
+        text = (e.get("text") or "")[:1000]
         if i == 1:
             what = f"依据知识库［{i}］：{label}。{text}" if text else f"知识库中与该问题最相关的对象是 {label}。"
         why_lines.append(f"［{i}］{label}：{text}")
@@ -155,6 +158,7 @@ def _mock_answer(payload: dict) -> dict:
     how_lines.append("按证据链路逐条核对：先确认业务口径，再核对报文/字段映射，最后定位代码单元。")
     how_lines.append("涉及业务规则的结论需人工复核后方可用于变更。")
     return {
+        "summary": ('检索到的原文片段：\n' + (ev[0].get('text') or '').strip()[:1000]) if ev else '知识库中没有找到可支持回答的内容，暂时无法确认。',
         "what": what,
         "why": "\n".join(why_lines),
         "how": "\n".join(how_lines),

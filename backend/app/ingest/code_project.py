@@ -23,7 +23,7 @@ from sqlalchemy import select
 
 from ..config import BASE_DIR
 from ..db import IngestJob, KbDocChunk, KbDocument, KbDocVersion, KbLibrary, SessionLocal
-from ..llm import HashEmbedder
+from ..llm import get_embedder
 from ..stores.graph import graph_store
 from ..stores.objects import object_store
 from ..stores.vector import vector_store
@@ -100,10 +100,12 @@ def inspect_archive(content: bytes, encoding: str = 'utf-8') -> tuple[dict[str, 
 
 
 def create_project(content: bytes, filename: str, project: str, version: str,
-                   library: str, encoding: str, author: str) -> str:
+                   library: str, encoding: str, author: str, tags: list[str] | None = None) -> str:
     project, version, library = project.strip(), version.strip(), library.strip() or 'code-projects'
     if not project or len(project) > 100 or not version or len(version) > 32 or len(library) > 128:
         raise ValueError('工程名称必填（≤100字符），版本必填（≤32字符）')
+    from .documents import normalize_tags
+    tags = normalize_tags(tags or [])
     sources, skipped = inspect_archive(content, encoding)
     job_id = uuid.uuid4().hex
     root = snapshot_root(job_id)
@@ -116,7 +118,7 @@ def create_project(content: bytes, filename: str, project: str, version: str,
     scope = hashlib.sha256(f'{library}\0{project}\0{version}'.encode()).hexdigest()
     options = dict(project=project, version=version, library=library, encoding=encoding,
                    author=author, filename=Path(filename).name, scope=scope, active=False,
-                   files=list(sources), skipped=skipped, engine='CodeGraph', model_used=False)
+                   files=list(sources), skipped=skipped, tags=tags, engine='CodeGraph', model_used=False)
     with SessionLocal() as db:
         db.add(IngestJob(id=job_id, source_type='code_project', status='queued',
                         object_keys=[f'kb-raw/projects/{job_id}/upload.zip'], options_json=options,
@@ -138,7 +140,24 @@ def load_result(job_id: str) -> dict:
     path = snapshot_root(job_id) / 'result.json'
     if not path.is_file():
         raise ValueError('解析结果尚未生成')
-    return json.loads(path.read_text('utf-8'))
+    result = json.loads(path.read_text('utf-8'))
+    with SessionLocal() as db:
+        job = db.get(IngestJob, job_id)
+        options = job.options_json if job else {}
+        if options.get('cleaned_chunks'):
+            doc_ids = select(KbDocument.id).where(KbDocument.project_job == job_id)
+            ids = set(db.scalars(select(KbDocChunk.id).where(KbDocChunk.doc_id.in_(doc_ids))))
+            result['chunks'] = [c for c in result['chunks'] if c['id'] in ids]
+            result['summary']['chunks'] = len(result['chunks'])
+            for file in result['files']:
+                file['chunks'] = sum(c['path'] == file['path'] for c in result['chunks'])
+        if options.get('cleaned_graph'):
+            graph = graph_store.dump()
+            result['nodes'] = [n for n in graph['nodes'] if n['props'].get('project_job') == job_id]
+            ids = {n['id'] for n in result['nodes']}
+            result['edges'] = [e for e in graph['edges'] if e['src'] in ids and e['dst'] in ids]
+            result['summary'].update(nodes=len(result['nodes']), edges=len(result['edges']))
+    return result
 
 
 def run_codegraph(root: Path) -> dict:
@@ -180,7 +199,8 @@ def adapt_graph(raw: dict, root: Path, options: dict, job_id: str) -> dict:
     nodes, chunks = [], []
     by_original = {}
     common = dict(project=options['project'], version=options['version'],
-                  project_job=job_id, scope=options['scope'], engine='codegraph')
+                  project_job=job_id, scope=options['scope'], engine='codegraph',
+                  library=options.get('library', ''), tags=options.get('tags', []), purpose='source')
     texts = {p: (root / 'source' / p).read_text('utf-8') for p in files}
 
     def relative(value: str) -> str:
@@ -205,15 +225,13 @@ def adapt_graph(raw: dict, root: Path, options: dict, job_id: str) -> dict:
         node = dict(id=nid, label=labels.get(n['kind'], 'CodeUnit'), props=props)
         nodes.append(node)
         by_original[n['id']] = node
-        # Structural units, with bounded line-preserving subdivisions for large sections.
+        # Keep each recognized structural unit whole, including long sections/paragraphs.
         if n['kind'] in {'function', 'variable', 'constant'}:
-            for first in range(start, end + 1, 100):
-                last = min(first + 99, end)
-                chunks.append(dict(id=hashlib.sha256(f'{nid}:{first}'.encode()).hexdigest()[:32],
-                                   node_id=nid, path=path, title=n['name'], start_line=first, end_line=last,
-                                   text=''.join(lines[first - 1:last]),
-                                   start_offset=sum(map(len, lines[:first - 1])),
-                                   end_offset=sum(map(len, lines[:last]))))
+            chunks.append(dict(id=hashlib.sha256(f'{nid}:{start}'.encode()).hexdigest()[:32],
+                               node_id=nid, path=path, title=n['name'], start_line=start, end_line=end,
+                               text=''.join(lines[start - 1:end]),
+                               start_offset=sum(map(len, lines[:start - 1])),
+                               end_offset=sum(map(len, lines[:end]))))
     # Files with no recognized paragraph/data item remain readable and searchable;
     # fallback is explicit and must not claim a structural parse succeeded.
     covered = {ch['path'] for ch in chunks}
@@ -260,8 +278,10 @@ def _remove_snapshot(job_id: str) -> None:
 def publish(job_id: str, result: dict, options: dict) -> None:
     root = snapshot_root(job_id)
     common = dict(project_job=job_id, project=options['project'], version=options['version'],
-                  scope=options['scope'], lang='COBOL', kb_version=options['version'], tier='B', trust=0.85)
-    embedder = HashEmbedder()
+                  scope=options['scope'], lang='COBOL', kb_version=options['version'], tier='B', trust=0.85,
+                  library=options['library'], tags=options.get('tags', []), purpose='source')
+    embedder = get_embedder()
+    node_kinds = {n['id']: n['props']['kind'] for n in result['nodes']}
     with SessionLocal() as db:
         previous_ids = [j.id for j in db.scalars(select(IngestJob).where(
             IngestJob.source_type == 'code_project', IngestJob.id != job_id))
@@ -290,9 +310,10 @@ def publish(job_id: str, result: dict, options: dict) -> None:
                 key = f'kb-raw/projects/{job_id}/source/{path}'
                 text = (root / 'source' / path).read_text('utf-8')
                 doc = KbDocument(library_key=options['library'], path=key, source_path=key, object_key=key,
-                                 name=f'{options["project"]}/{path}'[:256], doc_type=Path(path).suffix[1:],
+                                 name=f'{options["project"]}/{path}'[:256], doc_type=Path(path).suffix[1:].lower(),
                                  version=options['version'], status='published', vectorized=1, official=0,
-                                 author=options['author'], size_bytes=len(text.encode()), tags_json=['COBOL', 'CodeGraph'])
+                                 author=options['author'], size_bytes=len(text.encode()), tags_json=options.get('tags', []),
+                                 asset_type='code', project=options['project'], purpose='source', project_job=job_id)
                 db.add(doc)
                 db.flush()
                 db.add(KbDocVersion(doc_id=doc.id, version=options['version'], content=text,
@@ -300,7 +321,10 @@ def publish(job_id: str, result: dict, options: dict) -> None:
                 for i, ch in enumerate(c for c in result['chunks'] if c['path'] == path):
                     db.add(KbDocChunk(id=ch['id'], doc_id=doc.id, version=options['version'], chunk_index=i,
                                      title=ch['title'][:256], text=ch['text'],
-                                     start_offset=ch['start_offset'], end_offset=ch['end_offset']))
+                                     start_offset=ch['start_offset'], end_offset=ch['end_offset'],
+                                      meta_json=dict(kind=node_kinds.get(ch['node_id'], 'file'),
+                                                     start_line=ch['start_line'], end_line=ch['end_line'],
+                                                     node_id=ch['node_id'], source_path=path)))
             # Only replace the SAME project/version. Other versions remain independent.
             for previous_id in previous_ids:
                 _remove_snapshot(previous_id)
@@ -311,8 +335,15 @@ def publish(job_id: str, result: dict, options: dict) -> None:
                 for doc in old_docs:
                     doc.status = 'archived'
                     doc.vectorized = 0
+            for old_doc in db.scalars(select(KbDocument).where(KbDocument.asset_type == 'code',
+                    KbDocument.library_key == options['library'], KbDocument.project == options['project'],
+                    KbDocument.project_job != job_id)):
+                old_doc.is_current = 0
             current = db.get(IngestJob, job_id)
-            current.options_json = {**current.options_json, 'active': True, 'summary': result['summary']}
+            current.options_json = {**current.options_json, 'active': True, 'summary': result['summary'], 'reference_schema': 2,
+                                    'external_references': [r for r in result['unresolved'] if r['kind'] in {'calls', 'imports'}] + [
+                                        dict(name=n['props']['name'], kind='imports', path=n['props']['path'], line=n['props']['start_line'])
+                                        for n in result['nodes'] if n['props'].get('kind') == 'import']}
             current.status = 'done'
             current.steps = [{**s, **(dict(status='done', detail='处理完成；可查看源码、切片和图谱')
                                      if s['step'] == 'publish' else {})} for s in current.steps]

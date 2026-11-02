@@ -2,16 +2,34 @@
 from __future__ import annotations
 
 import json
+import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from ..deps import audit, current_user, require_roles
 from ..db import User
 from ..knowledge import manage as km
+from ..knowledge import catalog
+from ..ingest.documents import MAX_DOCUMENT
 from ..response import KbError, ok
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
+
+
+@router.get('/catalog')
+def catalog_options(request: Request, kb: str = '', project: str = '', user: User = Depends(current_user)):
+    return ok(catalog.catalog_options(kb, project), request)
+
+
+@router.get('/assets')
+def assets(request: Request, kb: str = '', project: str = '', asset_type: str = '', purpose: str = '',
+           tag: str = '', keyword: str = '', history: bool = False, version: str = '',
+           page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+           user: User = Depends(current_user)):
+    return ok(catalog.list_assets(kb, project, asset_type, purpose, tag, keyword, history, version, page, page_size), request)
 
 
 @router.post("/sync")
@@ -28,7 +46,7 @@ def get_libraries(request: Request, user: User = Depends(current_user)):
 
 
 class LibraryIn(BaseModel):
-    key: str
+    key: str = ''
     title: str = ""
     parent_key: str = ""
 
@@ -37,10 +55,11 @@ class LibraryIn(BaseModel):
 def create_library(body: LibraryIn, request: Request,
                    user: User = Depends(require_roles("gov", "admin", "dev"))):
     try:
-        row = km.create_library(body.key, body.title or body.key, body.parent_key)
+        key = body.key.strip() or f'sys-{uuid.uuid4().hex[:12]}'
+        row = km.create_library(key, body.title or key, body.parent_key)
     except ValueError as e:
         raise KbError("40001", str(e))
-    audit(request, user.username, "knowledge_library_create", body.key)
+    audit(request, user.username, "knowledge_library_create", row['key'])
     return ok(row, request)
 
 
@@ -55,6 +74,7 @@ def get_docs(
     vectorized: str = Query("", description="yes|no|空"),
     official: str = Query("", description="yes|no|空"),
     security: str = "",
+    project: str = '', project_job: str = '', purpose: str = '', tag: str = '', history: bool = False, asset_type: str = '',
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
     user: User = Depends(current_user),
@@ -68,6 +88,7 @@ def get_docs(
         vectorized=vectorized,
         official=official,
         security=security,
+        project=project, project_job=project_job, purpose=purpose, tag=tag, history=history, asset_type=asset_type,
         page=page,
         page_size=page_size,
     )
@@ -116,16 +137,18 @@ def batch_status(body: BatchStatusIn, request: Request,
 async def upload_doc(
     request: Request,
     file: UploadFile = File(...),
-    library_key: str = Form("uploads"),
+    library_key: str = Form(""),
     version: str = Form(...),
     security: str = Form("public"),
-    author: str = Form("admin"),
+    author: str = Form(""),
     tags: str = Form("[]"),
     official: bool = Form(True),
     auto_chunk: bool = Form(True),
+    project: str = Form(''),
+    purpose: str = Form('reference'),
     user: User = Depends(require_roles("gov", "admin", "dev")),
 ):
-    content = await file.read()
+    content = await file.read(MAX_DOCUMENT + 1)
     if not content:
         raise KbError("40001", "上传文件为空")
     if (file.filename or '').lower().endswith('.zip'):
@@ -133,11 +156,11 @@ async def upload_doc(
     try:
         tag_list = json.loads(tags) if tags else []
         if not isinstance(tag_list, list):
-            tag_list = []
+            raise KbError('40001', '标签必须是文本列表')
     except json.JSONDecodeError:
         tag_list = [t.strip() for t in tags.split(",") if t.strip()]
     try:
-        doc = km.upload_document(
+        doc = await run_in_threadpool(km.upload_document,
             filename=file.filename or "upload.bin",
             content=content,
             library_key=library_key,
@@ -147,12 +170,33 @@ async def upload_doc(
             tags=tag_list,
             official=official,
             auto_chunk=auto_chunk,
+            project=project, purpose=purpose,
         )
     except ValueError as e:
         raise KbError("40001", str(e))
     audit(request, user.username, "knowledge_upload", doc["id"],
           detail={"name": doc["name"], "version": version})
     return ok(doc, request)
+
+
+@router.get('/docs/{doc_id}/original')
+def original(doc_id: str, version: str = '', user: User = Depends(current_user)):
+    from ..db import SessionLocal, KbDocument, KbDocVersion
+    from ..stores.objects import object_store
+    from fastapi.responses import Response
+    from urllib.parse import quote
+    from pathlib import Path
+    with SessionLocal() as db:
+        doc = db.get(KbDocument, doc_id)
+        if doc is None:
+            raise KbError('40401', '资料不存在')
+        row = db.query(KbDocVersion).filter_by(doc_id=doc_id, version=version or doc.version).one_or_none()
+        key = (row.object_key if row else '') or (doc.object_key if not version or version == doc.version else '')
+        if not key or not object_store.exists(key):
+            raise KbError('40401', '原始文件不存在')
+        filename = Path(key).name
+        return Response((object_store._root / key).read_bytes(), media_type='application/octet-stream',
+                        headers={'Content-Disposition': "attachment; filename*=UTF-8''" + quote(filename)})
 
 
 @router.get("/docs/{doc_id}/chunks")
@@ -206,8 +250,67 @@ def get_codemap_list(request: Request, kb: str = "",
 
 
 @router.get("/codemap/{doc_id}")
-def get_codemap(doc_id: str, request: Request, user: User = Depends(current_user)):
-    data = km.code_map(doc_id)
-    if data.get("error") == "not_found":
-        raise KbError("40401", "代码文件不存在")
-    return ok(data, request)
+def get_codemap(doc_id: str, request: Request, direction: str = 'code2doc', version_id: str = '', user: User = Depends(current_user)):
+    from ..knowledge.browsing import code_map
+    try:
+        if direction not in {'code2doc', 'doc2code'}:
+            raise ValueError('无效的映射方向')
+        return ok(code_map(doc_id, direction, version_id), request)
+    except ValueError as exc:
+        raise KbError('40001', str(exc)) from exc
+
+
+@router.get('/project-versions')
+def get_project_versions(request: Request, library: str = '', project: str = '', user: User = Depends(current_user)):
+    from ..knowledge.browsing import project_versions
+    return ok(project_versions(library, project), request)
+
+
+@router.get('/docs/{doc_id}/comparison-versions')
+def get_comparison_versions(doc_id: str, request: Request, user: User = Depends(current_user)):
+    from ..knowledge.browsing import comparison_versions
+    try:
+        return ok(comparison_versions(doc_id), request)
+    except ValueError as exc:
+        raise KbError('40001', str(exc)) from exc
+
+
+@router.get('/docs/{doc_id}/comparison')
+def get_comparison(doc_id: str, request: Request, old: str, new: str, user: User = Depends(current_user)):
+    from ..knowledge.browsing import compare
+    try:
+        return ok(compare(doc_id, old, new), request)
+    except ValueError as exc:
+        raise KbError('40001', str(exc)) from exc
+
+
+class CleanupIn(BaseModel):
+    target: Literal['chunks', 'graph']
+    doc_id: str = ''
+    job_id: str = ''
+    library: str = ''
+    project: str = ''
+    version: str = ''
+    chunk_ids: list[str] = Field(default_factory=list, max_length=1000)
+    confirmation_token: str = ''
+
+
+@router.post('/cleanup/preview')
+def preview_cleanup(body: CleanupIn, request: Request, user: User = Depends(require_roles('gov', 'admin', 'dev'))):
+    from ..knowledge.maintenance import preview
+    try:
+        return ok(preview(body.model_dump(exclude={'confirmation_token'})), request)
+    except ValueError as exc:
+        raise KbError('40001', str(exc)) from exc
+
+
+@router.post('/cleanup/execute')
+def execute_cleanup(body: CleanupIn, request: Request, user: User = Depends(require_roles('gov', 'admin', 'dev'))):
+    from ..knowledge.maintenance import execute
+    try:
+        result = execute(body.model_dump(exclude={'confirmation_token'}), body.confirmation_token)
+    except ValueError as exc:
+        raise KbError('40001', str(exc)) from exc
+    audit(request, user.username, 'knowledge_cleanup_' + body.target, body.doc_id or body.job_id,
+          detail={'title': result['title'], 'counts': result['counts']})
+    return ok(result, request)

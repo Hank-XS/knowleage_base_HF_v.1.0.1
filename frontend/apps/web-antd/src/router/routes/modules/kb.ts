@@ -152,6 +152,7 @@ const routes: RouteRecordRaw[] = [
           icon: 'lucide:wrench',
           order: 30,
           title: '构建与治理',
+          hideInMenu: true,
         },
         name: 'KbOps',
         path: 'ops',
@@ -166,6 +167,7 @@ const routes: RouteRecordRaw[] = [
               icon: 'lucide:upload-cloud',
               order: 1,
               title: '接入任务',
+              hideInMenu: true,
             },
           },
           {
@@ -177,6 +179,7 @@ const routes: RouteRecordRaw[] = [
               icon: 'lucide:clipboard-check',
               order: 2,
               title: '治理工作台',
+              hideInMenu: true,
             },
           },
         ],

@@ -28,6 +28,7 @@ export interface KbSourcePreview {
 }
 
 export interface KbAnswer {
+  summary?: string;
   caveats?: string[];
   confidence?: number;
   how: string;
@@ -97,6 +98,26 @@ export function createSession() {
     '/qa/sessions',
     {},
   );
+}
+
+export interface QaSessionSummary {
+  session_id: string;
+  title: string;
+  message_count: number;
+  updated_at: string;
+  created_at: string;
+}
+
+export function listQaSessions(params: { keyword?: string; page?: number } = {}) {
+  return requestClient.get<{ items: QaSessionSummary[]; total: number }>('/qa/sessions', { params });
+}
+
+export function getQaHistory(sessionId: string) {
+  return requestClient.get<(KbAnswerPayload & { question: string; created_at: string })[]>(`/qa/sessions/${sessionId}/history`);
+}
+
+export function getQaRuntime() {
+  return requestClient.get<{ llm: { mode: string }; embedding: { mode: string } }>('/admin/llm-status');
 }
 
 /** 提问（单一 Flow） */
@@ -374,12 +395,12 @@ export function graphSearch(mode: string, params: Record<string, any>) {
 }
 
 /** 图谱全量结构（拓扑可视化） */
-export function graphStruct() {
+export function graphStruct(params: Record<string, any> = {}) {
   return requestClient.get<{
     edges: GraphEdge[];
     nodes: GraphNode[];
     stats: { by_label: Record<string, number>; edges: number; nodes: number };
-  }>('/graph/struct');
+  }>('/graph/struct', { params });
 }
 
 /** 标签词表 */
@@ -416,6 +437,10 @@ export interface KmLibrary {
 
 export interface KmDoc {
   author?: string;
+  project?: string;
+  purpose?: string;
+  asset_type?: string;
+  project_job?: string;
   content?: string;
   id: string;
   kbKey: string;
@@ -473,8 +498,8 @@ export function batchKmDocStatus(body: {
   );
 }
 
-export function uploadKmDoc(form: FormData) {
-  return requestClient.post<KmDoc>('/knowledge/upload', form);
+export function uploadKmDoc(form: FormData, onUploadProgress?: (event: { loaded: number; total?: number }) => void) {
+  return requestClient.post<KmDoc>('/knowledge/upload', form, { onUploadProgress });
 }
 
 export function getKmChunks(id: string, params?: { keyword?: string; version?: string }) {

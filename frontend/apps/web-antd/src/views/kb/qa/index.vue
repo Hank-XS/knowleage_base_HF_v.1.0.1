@@ -1,903 +1,143 @@
 <script lang="ts" setup>
-import type { KbAnswerPayload, KbSource, KbSourcePreview } from '#/api/kb';
-import type { UserInfo } from '@vben/types';
-
+import type { KbAnswerPayload, KbSource, KbSourcePreview, QaSessionSummary } from '#/api/kb';
 import { computed, nextTick, onMounted, ref } from 'vue';
-
 import { Page } from '@vben/common-ui';
 import { useUserStore } from '@vben/stores';
-
-import {
-  Alert as AAlert,
-  Badge as ABadge,
-  Button as AButton,
-  Card as ACard,
-  Collapse as ACollapse,
-  CollapsePanel as ACollapsePanel,
-  Empty as AEmpty,
-  Input as AInput,
-  Modal as AModal,
-  Switch as ASwitch,
-  Spin as ASpin,
-  Tag as ATag,
-  Tooltip as ATooltip,
-  message,
-} from 'ant-design-vue';
-
-import {
-  ask,
-  askAgent,
-  createSession,
-  previewSource,
-  reviewAnswer,
-} from '#/api/kb';
+import { Alert, Button, Card, Empty, Input, InputSearch, Modal, Spin, Switch, Tag, message } from 'ant-design-vue';
+import { ask, askAgent, createSession, getQaHistory, getQaRuntime, listQaSessions, previewSource, reviewAnswer } from '#/api/kb';
 
 defineOptions({ name: 'KbQa' });
-
-interface ChatItem {
-  answer?: KbAnswerPayload;
-  question: string;
-  role: 'assistant' | 'user';
-}
-
+interface ChatItem { role: 'user' | 'assistant'; question: string; answer?: KbAnswerPayload; error?: string }
 const userStore = useUserStore();
-const userInfo = computed<UserInfo>(() => userStore.userInfo);
-const role = computed(() => userInfo.value?.roles?.[0] ?? '');
-const canReview = computed(() =>
-  ['biz', 'gov', 'admin', 'arch'].includes(role.value),
-);
+const canReview = computed(() => ['biz', 'gov', 'admin', 'arch'].includes(userStore.userInfo?.roles?.[0] || ''));
+const sessionId = ref(''); const question = ref(''); const loading = ref(false); const opening = ref(true);
+const chat = ref<ChatItem[]>([]); const listRef = ref<HTMLElement>(); const agentMode = ref(true);
+const sessions = ref<QaSessionSummary[]>([]); const historySearch = ref(''); const historyPage = ref(1); const historyTotal = ref(0); const historyLoading = ref(false);
+const runtime = ref<Awaited<ReturnType<typeof getQaRuntime>>>();
+const detailsOpen = ref(false); const selectedAnswer = ref<KbAnswerPayload>(); const reviewLoading = ref(false);
+const docOpen = ref(false); const docLoading = ref(false); const docPreview = ref<KbSourcePreview | null>(null); const activeSource = ref<KbSource>();
+const sourceNames: Record<string, string> = { code: '代码', doc: '文档', graph: '图谱', mapping: '映射' };
+const detailSections = [{ key: 'what', label: '结论说明' }, { key: 'why', label: '原因说明' }, { key: 'how', label: '处理建议' }] as const;
+let historySequence = 0;
 
-const sessionId = ref('');
-const question = ref('');
-const loading = ref(false);
-const chat = ref<ChatItem[]>([]);
-const listRef = ref<HTMLElement>();
-const reviewLoading = ref('');
-/** Agent 模式：自动调度文档/代码/图谱等工具 */
-const agentMode = ref(true);
-
-const docOpen = ref(false);
-const docLoading = ref(false);
-const docPreview = ref<KbSourcePreview | null>(null);
-const activeSource = ref<KbSource | null>(null);
-
-const HIT_TEXT: Record<string, string> = {
-  exact: '精确命中 · 直出已验证答案',
-  miss: '未命中 · 实时推理',
-  similar: '相似命中 · 参考复用',
-};
-const HIT_COLOR: Record<string, string> = {
-  exact: 'green',
-  miss: 'blue',
-  similar: 'orange',
-};
-const SRC_COLOR: Record<string, string> = {
-  code: 'purple',
-  doc: 'geekblue',
-  graph: 'cyan',
-  mapping: 'gold',
-};
-const SRC_TEXT: Record<string, string> = {
-  code: '代码',
-  doc: '文档',
-  graph: '图谱',
-  mapping: '映射',
-};
-
-const suggestions = [
-  'ATM取款返回错误码14余额不足，应如何排查处理？',
-  '错误码14是什么意思？',
-  'Smart卡在系统里属于什么卡种口径？',
-  '修改ATMWD402程序会影响哪些接口和子系统？',
-];
-
-const lastEntities = computed<string[]>(() => {
-  for (let i = chat.value.length - 1; i >= 0; i--) {
-    const item = chat.value[i]!;
-    if (item.role === 'assistant' && item.answer) {
-      return item.answer.entities ?? [];
-    }
-  }
-  return [];
-});
-
+async function loadSessions() {
+  const sequence = ++historySequence; historyLoading.value = true;
+  try {
+    const data = await listQaSessions({ keyword: historySearch.value, page: historyPage.value });
+    if (sequence === historySequence) { sessions.value = data.items; historyTotal.value = data.total; }
+  } finally { if (sequence === historySequence) historyLoading.value = false; }
+}
+async function searchHistory() { historyPage.value = 1; await loadSessions(); }
+async function changePage(delta: number) { historyPage.value += delta; await loadSessions(); }
+function newChat() { if (loading.value || opening.value) return; sessionId.value = ''; chat.value = []; question.value = ''; }
+async function openSession(id: string) {
+  if (loading.value || opening.value) return;
+  opening.value = true;
+  try {
+    const items = await getQaHistory(id);
+    sessionId.value = id; question.value = '';
+    chat.value = items.flatMap(item => [{ role: 'user' as const, question: item.question }, { role: 'assistant' as const, question: item.question, answer: item }]);
+    await scrollBottom(false);
+  } catch { message.error('会话加载失败，请稍后重试'); }
+  finally { opening.value = false; }
+}
 onMounted(async () => {
-  const s = await createSession();
-  sessionId.value = s.session_id;
+  try { await loadSessions(); opening.value = false; if (sessions.value[0]) await openSession(sessions.value[0].session_id); }
+  catch { message.error('历史记录加载失败，可稍后刷新重试'); }
+  finally { opening.value = false; }
+  try { runtime.value = await getQaRuntime(); } catch { /* Status does not block asking. */ }
 });
-
-async function scrollBottom() {
-  await nextTick();
-  listRef.value?.scrollTo({ behavior: 'smooth', top: 1_000_000 });
-}
-
-async function send(q?: string) {
-  const text = (q ?? question.value).trim();
-  if (!text || loading.value || !sessionId.value) return;
-  question.value = '';
-  chat.value.push({ question: text, role: 'user' });
-  loading.value = true;
-  await scrollBottom();
+async function scrollBottom(smooth = true) { await nextTick(); listRef.value?.scrollTo({ top: listRef.value.scrollHeight, behavior: smooth ? 'smooth' : 'instant' }); }
+async function send() {
+  const text = question.value.trim(); if (!text || loading.value || opening.value) return;
+  loading.value = true; question.value = '';
+  chat.value.push({ role: 'user', question: text }); await scrollBottom();
   try {
-    const payload = agentMode.value
-      ? await askAgent(sessionId.value, text)
-      : await ask(sessionId.value, text);
-    chat.value.push({ answer: payload, question: text, role: 'assistant' });
-  } catch (e: any) {
-    message.error(e?.message ?? '问答失败');
-  } finally {
-    loading.value = false;
-    await scrollBottom();
-  }
+    if (!sessionId.value) sessionId.value = (await createSession()).session_id;
+    const answer = agentMode.value ? await askAgent(sessionId.value, text) : await ask(sessionId.value, text);
+    chat.value.push({ role: 'assistant', question: text, answer });
+    try { await loadSessions(); } catch { message.warning('答案已保存，历史列表暂未刷新'); }
+  } catch (error: any) {
+    chat.value.push({ role: 'assistant', question: text, error: error?.message || '本次回答未完成，请重试。' }); question.value = text;
+  } finally { loading.value = false; await scrollBottom(); }
 }
-
-async function doReview(answerId: string, verdict: 'approved' | 'rejected') {
-  reviewLoading.value = answerId + verdict;
-  try {
-    await reviewAnswer(answerId, verdict);
-    const item = chat.value.find(
-      (c) => c.answer?.answer_id === answerId,
-    )?.answer;
-    if (item) {
-      item.review_status = verdict === 'approved' ? 'verified' : 'rejected';
-    }
-    message.success(
-      verdict === 'approved'
-        ? '已复核通过并沉淀入已验证答案库'
-        : '已驳回（不入库）',
-    );
-  } catch (e: any) {
-    message.error(e?.message ?? '复核失败');
-  } finally {
-    reviewLoading.value = '';
-  }
+function onEnter(event: KeyboardEvent) { if (event.isComposing) return; event.preventDefault(); void send(); }
+function summary(answer: KbAnswerPayload) { return answer.answer.summary || answer.answer.what || answer.answer.how || answer.answer.why || '暂时无法确认，请补充问题中的工程或文件名称。'; }
+function openDetails(answer: KbAnswerPayload) { selectedAnswer.value = answer; detailsOpen.value = true; }
+function timeLabel(value: string) { return new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }); }
+async function doReview(verdict: 'approved' | 'rejected') {
+  const answer = selectedAnswer.value; if (!answer) return; reviewLoading.value = true;
+  try { await reviewAnswer(answer.answer_id, verdict); answer.review_status = verdict === 'approved' ? 'verified' : 'rejected'; message.success(verdict === 'approved' ? '已复核并保存为可复用答案' : '已驳回'); }
+  finally { reviewLoading.value = false; }
 }
-
-async function openSource(s: KbSource, answerId?: string) {
-  activeSource.value = s;
-  docOpen.value = true;
-  docLoading.value = true;
-  docPreview.value = null;
-  try {
-    docPreview.value = await previewSource({
-      answer_id: answerId,
-      label: s.label,
-      loc: s.loc,
-      no: s.no,
-      obj: s.obj,
-      path: s.path || s.obj || s.label,
-      ref: s.ref,
-      snippet: s.snippet,
-      type: s.type,
-    });
-  } catch (e: any) {
-    // 降级：接口失败时仍用片段展示
-    docPreview.value = {
-      available: Boolean(s.snippet),
-      content: s.snippet || e?.message || '无法加载文档',
-      from_cache: true,
-      loc: s.loc,
-      path: s.path || s.obj || s.label || '',
-      snippet: s.snippet,
-      title: s.ref || s.label || `依据 [${s.no}]`,
-      type: s.type,
-    };
-    if (!s.snippet) message.error(e?.message ?? '加载依据文档失败');
-  } finally {
-    docLoading.value = false;
-  }
+async function openSource(source: KbSource) {
+  activeSource.value = source; docOpen.value = true; docLoading.value = true; docPreview.value = null;
+  try { docPreview.value = await previewSource({ ...source, answer_id: selectedAnswer.value?.answer_id, path: source.path || source.obj || source.label }); }
+  catch { docPreview.value = { available: !!source.snippet, content: source.snippet || '暂时无法加载原文', from_cache: true, loc: source.loc, path: source.path || source.obj || '', snippet: source.snippet, title: source.ref, type: source.type }; }
+  finally { docLoading.value = false; }
 }
-
-function closeDoc() {
-  docOpen.value = false;
-}
-
-/** 将 snippet 在正文中高亮 */
+function escapeHtml(text: string) { return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'); }
 function highlightedContent(content: string, snippet?: string) {
-  if (!content) return '';
-  const snip = (snippet || '').trim().slice(0, 80);
-  if (!snip || !content.includes(snip)) {
-    return escapeHtml(content);
-  }
-  const parts = content.split(snip);
-  return parts
-    .map((p) => escapeHtml(p))
-    .join(`<mark class="src-hl">${escapeHtml(snip)}</mark>`);
-}
-
-function escapeHtml(s: string) {
-  return s
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
+  const part = (snippet || '').trim().slice(0, 80);
+  return part && content.includes(part) ? content.split(part).map(escapeHtml).join(`<mark>${escapeHtml(part)}</mark>`) : escapeHtml(content);
 }
 </script>
 
 <template>
   <Page>
     <div class="qa-wrap">
-      <!-- 会话头部 -->
-      <Card class="qa-header" :body-style="{ padding: '14px 20px' }">
-        <div class="qa-header-inner">
-          <div class="qa-title">
-            <span class="qa-logo">KB</span>
-            <div>
-              <div class="qa-name">核心系统迁移知识库 · 问答控制台</div>
-              <div class="qa-sub">
-                场景 ATM ｜ 单一 Flow：问题分析 → 三级分流 → 多路检索 →
-                整体分析 → 带依据作答
-              </div>
-            </div>
-          </div>
-          <div class="qa-meta">
-            <span class="agent-switch">
-              <ASwitch v-model:checked="agentMode" size="small" />
-              <span class="agent-label">
-                {{ agentMode ? 'Agent 自动调度工具' : '单一 Flow' }}
-              </span>
-            </span>
-            <ATag color="processing">会话 {{ sessionId.slice(0, 8) }}</ATag>
-            <ATag :color="canReview ? 'green' : 'default'">
-              当前角色：{{ role || '-' }}
-            </ATag>
-          </div>
-        </div>
-      </Card>
-
+      <div class="qa-header"><div><h1>问答控制台</h1><p>基于已入库资料回答，支持在同一会话中继续追问。</p></div>
+        <details class="settings"><summary>问答设置</summary><div><Switch v-model:checked="agentMode" size="small" :disabled="loading" /> 自动选择检索工具</div></details>
+      </div>
+      <Alert v-if="runtime?.llm.mode === 'mock'" class="runtime-note" type="info" show-icon message="当前为演示模式：展示检索片段，尚未启用模型综合回答。" />
       <div class="qa-main">
-        <!-- 对话区 -->
-        <Card class="qa-chat" :body-style="{ padding: '16px', height: '100%' }">
-          <div ref="listRef" class="chat-list">
-            <AEmpty
-              v-if="chat.length === 0"
-              class="chat-empty"
-              description="向知识库提问，例如错误码含义、业务规则、代码影响面"
-            />
-            <template v-for="(item, idx) in chat" :key="idx">
-              <div v-if="item.role === 'user'" class="row user">
-                <div class="bubble user-bubble">{{ item.question }}</div>
-              </div>
-              <div v-else class="row assistant">
-                <div class="bubble answer-bubble">
-                  <template v-if="item.answer">
-                    <div class="ans-header">
-                      <ABadge
-                        :status="
-                          item.answer.hit_type === 'exact'
-                            ? 'success'
-                            : item.answer.hit_type === 'similar'
-                              ? 'warning'
-                              : 'processing'
-                        "
-                        :text="HIT_TEXT[item.answer.hit_type]"
-                      />
-                      <ATag v-if="item.answer.similarity" size="small">
-                        相似度 {{ item.answer.similarity }}
-                      </ATag>
-                      <ATag size="small">{{ item.answer.intent }}</ATag>
-                      <span class="ans-ms">{{ item.answer.elapsed_ms }} ms</span>
-                    </div>
-
-                    <div class="ans-section what">
-                      <div class="sec-title">是什么</div>
-                      <div class="sec-body">{{ item.answer.answer.what }}</div>
-                    </div>
-                    <div class="ans-section why">
-                      <div class="sec-title">为什么</div>
-                      <div class="sec-body pre">{{ item.answer.answer.why }}</div>
-                    </div>
-                    <div class="ans-section how">
-                      <div class="sec-title">怎么处理</div>
-                      <div class="sec-body pre">{{ item.answer.answer.how }}</div>
-                    </div>
-
-                    <AAlert
-                      v-if="item.answer.answer.caveats?.length"
-                      class="ans-caveats"
-                      type="warning"
-                      show-icon
-                    >
-                      <template #message>
-                        需人工复核：
-                        {{ item.answer.answer.caveats.join('；') }}
-                      </template>
-                    </AAlert>
-
-                    <div class="ans-sources">
-                      <div class="src-title">
-                        依据来源（{{ item.answer.sources.length }} 条，点击查看原文）
-                      </div>
-                      <div class="src-list">
-                        <ATooltip
-                          v-for="s in item.answer.sources"
-                          :key="s.no"
-                          :title="`点击查看：${s.label || s.ref} ${s.loc || ''}`"
-                        >
-                          <button
-                            class="src-chip"
-                            type="button"
-                            @click="openSource(s, item.answer?.answer_id)"
-                          >
-                            <ATag :color="SRC_COLOR[s.type] ?? 'default'">
-                              [{{ s.no }}] {{ SRC_TEXT[s.type] ?? s.type }}
-                            </ATag>
-                            <span class="src-ref">{{ s.ref }}</span>
-                          </button>
-                        </ATooltip>
-                      </div>
-                    </div>
-
-                    <ACollapse class="ans-trace" :bordered="false">
-                      <ACollapsePanel
-                        key="trace"
-                        header="推理过程（经得起追问）"
-                      >
-                        <div
-                          v-for="t in item.answer.reasoning_trace"
-                          :key="t.step"
-                          class="trace-row"
-                        >
-                          <span class="trace-step">#{{ t.step }}</span>
-                          <ATag color="blue" size="small">{{ t.tool }}</ATag>
-                          <span class="trace-res">{{ t.result }}</span>
-                        </div>
-                      </ACollapsePanel>
-                    </ACollapse>
-
-                    <div
-                      v-if="canReview && item.answer.review_status === 'pending_review'"
-                      class="ans-review"
-                    >
-                      <AButton
-                        :loading="reviewLoading === item.answer.answer_id + 'approved'"
-                        size="small"
-                        type="primary"
-                        @click="doReview(item.answer.answer_id, 'approved')"
-                      >
-                        复核通过并沉淀
-                      </AButton>
-                      <AButton
-                        :loading="reviewLoading === item.answer.answer_id + 'rejected'"
-                        danger
-                        size="small"
-                        @click="doReview(item.answer.answer_id, 'rejected')"
-                      >
-                        驳回
-                      </AButton>
-                      <span class="review-tip">
-                        miss 答案须人工复核后方可入库复用
-                      </span>
-                    </div>
-                    <div v-else class="ans-status">
-                      <ATag
-                        :color="
-                          item.answer.review_status === 'verified'
-                            ? 'green'
-                            : item.answer.review_status === 'rejected'
-                              ? 'red'
-                              : 'default'
-                        "
-                      >
-                        复核状态：{{ item.answer.review_status }}
-                      </ATag>
-                    </div>
-                  </template>
-                </div>
-              </div>
-            </template>
-            <div v-if="loading" class="row assistant">
-              <div class="bubble answer-bubble loading-bubble">
-                <ASpin size="small" />
-                <span class="loading-text">
-                  多路检索与整体分析中（问题分析 → 分流 → 检索 → 生成）…
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <!-- 输入区 -->
-          <div class="chat-input">
-            <div class="sug-list">
-              <span
-                v-for="s in suggestions"
-                :key="s"
-                class="sug-chip"
-                @click="send(s)"
-              >
-                {{ s }}
-              </span>
-            </div>
-            <div class="input-row">
-              <AInput
-                v-model:value="question"
-                :disabled="loading"
-                placeholder="输入问题，回车发送（支持追问）"
-                size="large"
-                @keyup.enter="send()"
-              />
-              <AButton
-                :loading="loading"
-                size="large"
-                type="primary"
-                @click="send()"
-              >
-                提问
-              </AButton>
-            </div>
-          </div>
+        <Card class="history-panel" :body-style="{ padding: '16px', height: '100%' }">
+          <div class="history-heading"><strong>问答历史</strong><Button :disabled="loading || opening" size="small" type="primary" @click="newChat">新对话</Button></div>
+          <InputSearch v-model:value="historySearch" allow-clear placeholder="搜索历史问题" @search="searchHistory" />
+          <Spin :spinning="historyLoading" class="history-content"><nav aria-label="历史会话">
+            <button v-for="session in sessions" :key="session.session_id" type="button" class="history-item" :class="{ active: sessionId === session.session_id }" :disabled="loading || opening" @click="openSession(session.session_id)">
+              <strong :title="session.title">{{ session.title }}</strong><span>{{ timeLabel(session.updated_at) }} · {{ session.message_count }} 轮问答</span>
+            </button><Empty v-if="!sessions.length && !historyLoading" :description="historySearch ? '没有匹配的历史问题' : '开始提问后，会话会自动保存'" :image="Empty.PRESENTED_IMAGE_SIMPLE" />
+          </nav></Spin>
+          <div v-if="historyTotal > 20" class="history-pages"><Button size="small" :disabled="historyPage === 1 || historyLoading" @click="changePage(-1)">上一页</Button><span>{{ historyPage }} / {{ Math.ceil(historyTotal / 20) }}</span><Button size="small" :disabled="historyPage * 20 >= historyTotal || historyLoading" @click="changePage(1)">下一页</Button></div>
         </Card>
-
-        <!-- 侧栏 -->
-        <div class="qa-side">
-          <Card size="small" title="长时记忆 · 三级分流">
-            <div class="side-row">
-              <ABadge status="success" text="精确命中（sim ≥ 0.95）：指纹直出" />
-            </div>
-            <div class="side-row">
-              <ABadge
-                status="warning"
-                text="相似命中（0.80 ~ 0.95）：参考复用"
-              />
-            </div>
-            <div class="side-row">
-              <ABadge status="processing" text="未命中（< 0.80）：实时推理" />
-            </div>
-            <div class="side-note">
-              复核通过的答案写入已验证答案库，同题再次提问将精确命中直接返回。
-            </div>
-          </Card>
-          <Card class="mt" size="small" title="本次会话统计">
-            <div class="stat-grid">
-              <div class="stat">
-                <div class="stat-num">{{ chat.length }}</div>
-                <div class="stat-label">消息</div>
-              </div>
-              <div class="stat">
-                <div class="stat-num">
-                  {{ chat.filter((c) => c.answer?.hit_type === 'exact').length }}
-                </div>
-                <div class="stat-label">精确命中</div>
-              </div>
-              <div class="stat">
-                <div class="stat-num">
-                  {{ chat.filter((c) => c.answer?.sources?.length).length }}
-                </div>
-                <div class="stat-label">带溯源答案</div>
+        <Card class="qa-chat" :body-style="{ padding: '20px', height: '100%' }">
+          <div class="conversation-heading"><strong>{{ sessionId ? '当前会话' : '新对话' }}</strong><span>历史会话可直接打开并继续提问</span></div>
+          <div ref="listRef" class="chat-list" :aria-busy="loading || opening">
+            <Spin v-if="opening" class="opening" />
+            <Empty v-else-if="!chat.length" class="chat-empty" description="输入问题开始对话。写明工程、程序或文档名称，有助于定位相关资料。" />
+            <div v-for="(item, index) in chat" :key="index" class="row" :class="item.role">
+              <div v-if="item.role === 'user'" class="bubble user-bubble">{{ item.question }}</div>
+              <div v-else class="bubble answer-bubble">
+                <template v-if="item.answer">
+                  <p class="answer-text">{{ summary(item.answer) }}</p>
+                  <p v-if="runtime?.llm.mode !== 'mock' && item.answer.answer.caveats?.length" class="answer-caveat">注意：{{ item.answer.answer.caveats.join('；') }}</p>
+                  <div class="answer-footer"><Button type="link" size="small" @click="openDetails(item.answer)">补充说明与依据<template v-if="item.answer.sources?.length">（{{ item.answer.sources.length }}）</template></Button><span v-if="item.answer.review_status === 'verified'">已复核</span></div>
+                </template><p v-else class="error-text">{{ item.error }}</p>
               </div>
             </div>
-          </Card>
-          <Card class="mt" size="small" title="识别实体（最近一条）">
-            <template v-if="lastEntities.length">
-              <ATag v-for="e in lastEntities" :key="e" color="cyan">{{ e }}</ATag>
-            </template>
-            <span v-else class="side-note">暂无</span>
-          </Card>
-        </div>
+            <div v-if="loading" class="row assistant"><div class="loading-bubble"><Spin size="small" /><span>正在查找资料并整理回答…</span></div></div>
+          </div>
+          <div class="chat-input"><Input.TextArea v-model:value="question" :auto-size="{ minRows: 2, maxRows: 5 }" :disabled="loading || opening" placeholder="请输入问题（Enter 发送，Shift + Enter 换行）" @keydown.enter.exact="onEnter" /><Button type="primary" :loading="loading" :disabled="opening || !question.trim()" @click="send">发送</Button></div>
+        </Card>
       </div>
     </div>
-
-    <AModal
-      v-model:open="docOpen"
-      :footer="null"
-      :title="docPreview?.title || activeSource?.ref || '依据文档'"
-      destroy-on-close
-      width="860px"
-      wrap-class-name="src-doc-modal"
-      @cancel="closeDoc"
-    >
-      <div class="doc-meta">
-        <ATag :color="SRC_COLOR[docPreview?.type || activeSource?.type || ''] ?? 'default'">
-          {{ SRC_TEXT[docPreview?.type || activeSource?.type || ''] || docPreview?.type || 'doc' }}
-        </ATag>
-        <ATag v-if="activeSource?.no" color="processing">#{{ activeSource.no }}</ATag>
-        <ATag v-if="docPreview?.from_cache" color="orange">片段拼合</ATag>
-        <span v-if="docPreview?.path" class="doc-path" :title="docPreview.path">
-          {{ docPreview.path }}
-        </span>
-        <span v-if="docPreview?.loc" class="doc-loc">定位：{{ docPreview.loc }}</span>
+    <Modal v-model:open="detailsOpen" title="补充说明与依据" :footer="null" width="800px">
+      <div v-if="selectedAnswer" class="answer-details">
+        <section v-for="section in detailSections" :key="section.key"><template v-if="selectedAnswer.answer[section.key]"><h3>{{ section.label }}</h3><p>{{ selectedAnswer.answer[section.key] }}</p></template></section>
+        <section v-if="selectedAnswer.answer.caveats?.length"><h3>使用说明</h3><p>{{ selectedAnswer.answer.caveats.join('；') }}</p></section>
+        <section><h3>依据来源</h3><p v-if="!selectedAnswer.sources?.length">本次没有可查看的依据来源。</p><button v-for="source in selectedAnswer.sources" :key="source.no" type="button" class="source-link" @click="openSource(source)"><Tag>{{ sourceNames[source.type] || source.type }}</Tag><span>[{{ source.no }}] {{ source.ref || source.label }}<small>{{ source.loc }}</small></span><span>查看原文 →</span></button></section>
+        <div v-if="canReview && selectedAnswer.review_status === 'pending_review'" class="review-actions"><Button type="primary" :loading="reviewLoading" @click="doReview('approved')">复核通过并保存</Button><Button danger :loading="reviewLoading" @click="doReview('rejected')">驳回</Button></div>
       </div>
-      <ASpin :spinning="docLoading">
-        <div
-          v-if="docPreview?.content"
-          class="doc-body"
-          v-html="highlightedContent(docPreview.content, docPreview.snippet || activeSource?.snippet)"
-        ></div>
-        <AEmpty v-else description="暂无文档内容" />
-      </ASpin>
-    </AModal>
+    </Modal>
+    <Modal v-model:open="docOpen" :title="docPreview?.title || activeSource?.ref || '依据原文'" :footer="null" width="860px" destroy-on-close>
+      <p class="doc-path">{{ docPreview?.path }} {{ docPreview?.loc }}</p><Tag v-if="docPreview?.from_cache">当前显示检索片段</Tag>
+      <Spin :spinning="docLoading"><div v-if="docPreview?.content" class="doc-body" v-html="highlightedContent(docPreview.content, docPreview.snippet || activeSource?.snippet)"></div><Empty v-else description="暂无原文" /></Spin>
+    </Modal>
   </Page>
 </template>
 
-<style lang="scss" scoped>
-.qa-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  height: calc(100vh - 130px);
-}
-
-.qa-header-inner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.qa-title {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
-
-.qa-logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 42px;
-  height: 42px;
-  font-weight: 700;
-  color: #fff;
-  background: linear-gradient(135deg, #1a2330, #d4875a);
-  border-radius: 10px;
-}
-
-.qa-name {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.qa-sub {
-  margin-top: 2px;
-  font-size: 12px;
-  color: hsl(var(--muted-foreground));
-}
-
-.qa-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-}
-
-.agent-switch {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  margin-right: 4px;
-  font-size: 12px;
-  color: hsl(var(--muted-foreground));
-}
-
-.agent-label {
-  white-space: nowrap;
-}
-
-.qa-main {
-  display: flex;
-  flex: 1;
-  gap: 12px;
-  min-height: 0;
-}
-
-.qa-chat {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-
-  :deep(.ant-card-body) {
-    display: flex;
-    flex-direction: column;
-  }
-}
-
-.chat-list {
-  flex: 1;
-  padding-right: 6px;
-  overflow-y: auto;
-}
-
-.chat-empty {
-  margin-top: 80px;
-}
-
-.row {
-  display: flex;
-  margin-bottom: 14px;
-
-  &.user {
-    justify-content: flex-end;
-  }
-}
-
-.bubble {
-  max-width: 86%;
-  padding: 10px 14px;
-  border-radius: 12px;
-}
-
-.user-bubble {
-  color: #fff;
-  background: hsl(var(--primary));
-  border-bottom-right-radius: 2px;
-}
-
-.answer-bubble {
-  width: 100%;
-  background: hsl(var(--card));
-  border: 1px solid hsl(var(--border));
-  border-bottom-left-radius: 2px;
-}
-
-.loading-bubble {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-
-  .loading-text {
-    font-size: 13px;
-    color: hsl(var(--muted-foreground));
-  }
-}
-
-.ans-header {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 10px;
-
-  .ans-ms {
-    margin-left: auto;
-    font-size: 12px;
-    color: hsl(var(--muted-foreground));
-  }
-}
-
-.ans-section {
-  padding: 8px 12px;
-  margin-bottom: 8px;
-  border-radius: 8px;
-
-  .sec-title {
-    margin-bottom: 4px;
-    font-size: 13px;
-    font-weight: 600;
-  }
-
-  .sec-body {
-    font-size: 13px;
-    line-height: 1.7;
-    word-break: break-word;
-    white-space: pre-wrap;
-  }
-
-  &.what {
-    background: rgb(82 196 26 / 8%);
-
-    .sec-title {
-      color: #389e0d;
-    }
-  }
-
-  &.why {
-    background: rgb(22 119 255 / 8%);
-
-    .sec-title {
-      color: #1677ff;
-    }
-  }
-
-  &.how {
-    background: rgb(250 140 22 / 10%);
-
-    .sec-title {
-      color: #d46b08;
-    }
-  }
-}
-
-.ans-caveats {
-  margin-bottom: 8px;
-}
-
-.ans-sources {
-  margin-bottom: 8px;
-
-  .src-title {
-    margin-bottom: 6px;
-    font-size: 13px;
-    font-weight: 600;
-    color: hsl(var(--muted-foreground));
-  }
-
-  .src-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-
-  .src-chip {
-    display: inline-flex;
-    gap: 2px;
-    align-items: center;
-    padding: 2px 8px 2px 2px;
-    margin: 0;
-    color: inherit;
-    cursor: pointer;
-    background: hsl(var(--card));
-    border: 1px solid hsl(var(--border));
-    border-radius: 6px;
-    transition:
-      border-color 0.15s,
-      color 0.15s,
-      box-shadow 0.15s;
-    appearance: none;
-
-    &:hover {
-      color: hsl(var(--primary));
-      border-color: hsl(var(--primary));
-      box-shadow: 0 0 0 2px rgb(22 119 255 / 12%);
-    }
-  }
-
-  .src-ref {
-    max-width: 280px;
-    overflow: hidden;
-    font-size: 12px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-}
-
-.doc-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.doc-path {
-  max-width: 520px;
-  overflow: hidden;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-  color: hsl(var(--muted-foreground));
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.doc-loc {
-  font-size: 12px;
-  color: hsl(var(--muted-foreground));
-}
-
-.doc-body {
-  max-height: min(62vh, 640px);
-  padding: 12px 14px;
-  overflow: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12.5px;
-  line-height: 1.65;
-  word-break: break-word;
-  white-space: pre-wrap;
-  background: hsl(var(--muted) / 0.35);
-  border: 1px solid hsl(var(--border));
-  border-radius: 8px;
-
-  :deep(.src-hl) {
-    padding: 0 2px;
-    color: inherit;
-    background: rgb(250 173 20 / 45%);
-    border-radius: 2px;
-  }
-}
-
-.trace-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 3px 0;
-  font-size: 12px;
-
-  .trace-step {
-    width: 28px;
-    color: hsl(var(--muted-foreground));
-  }
-
-  .trace-res {
-    color: hsl(var(--muted-foreground));
-  }
-}
-
-.ans-review {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-top: 8px;
-
-  .review-tip {
-    font-size: 12px;
-    color: hsl(var(--muted-foreground));
-  }
-}
-
-.ans-status {
-  margin-top: 8px;
-}
-
-.chat-input {
-  padding-top: 10px;
-  border-top: 1px solid hsl(var(--border));
-
-  .sug-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-bottom: 8px;
-  }
-
-  .sug-chip {
-    padding: 3px 10px;
-    font-size: 12px;
-    cursor: pointer;
-    background: hsl(var(--card));
-    border: 1px solid hsl(var(--border));
-    border-radius: 999px;
-    transition: all 0.2s;
-
-    &:hover {
-      color: hsl(var(--primary));
-      border-color: hsl(var(--primary));
-    }
-  }
-
-  .input-row {
-    display: flex;
-    gap: 8px;
-  }
-}
-
-.qa-side {
-  display: flex;
-  flex-direction: column;
-  width: 280px;
-  flex-shrink: 0;
-
-  .mt {
-    margin-top: 12px;
-  }
-
-  .side-row {
-    margin: 6px 0;
-  }
-
-  .side-note {
-    margin-top: 8px;
-    font-size: 12px;
-    line-height: 1.6;
-    color: hsl(var(--muted-foreground));
-  }
-
-  .stat-grid {
-    display: flex;
-    justify-content: space-around;
-  }
-
-  .stat {
-    text-align: center;
-  }
-
-  .stat-num {
-    font-size: 22px;
-    font-weight: 700;
-    color: hsl(var(--primary));
-  }
-
-  .stat-label {
-    font-size: 12px;
-    color: hsl(var(--muted-foreground));
-  }
-}
+<style scoped>
+.qa-wrap{display:flex;flex-direction:column;gap:14px;height:calc(100vh - 145px);min-height:520px}.qa-header{display:flex;align-items:center;justify-content:space-between;gap:20px}.qa-header h1{font-size:23px;font-weight:600}.qa-header p,.conversation-heading>span{font-size:13px;color:hsl(var(--muted-foreground));margin-top:5px}.settings{position:relative;font-size:12px;flex-shrink:0}.settings summary{cursor:pointer}.settings>div{position:absolute;right:0;top:28px;z-index:5;width:220px;padding:16px;background:hsl(var(--card));border:1px solid hsl(var(--border));border-radius:8px}.qa-main{display:grid;grid-template-columns:260px minmax(0,1fr);gap:16px;flex:1;min-height:0}.history-panel,.qa-chat{min-height:0}.history-panel :deep(.ant-card-body),.qa-chat :deep(.ant-card-body){display:flex;flex-direction:column;min-height:0}.history-heading,.conversation-heading{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:16px}.history-content{flex:1;min-height:0;overflow:auto;margin-top:12px}.history-content :deep(.ant-spin-container){height:100%}.history-item{display:flex;flex-direction:column;gap:8px;width:100%;padding:14px 12px;margin-bottom:6px;border:1px solid transparent;border-radius:8px;text-align:left;cursor:pointer;background:transparent;color:inherit}.history-item strong{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:100%;font-size:13px;font-weight:500}.history-item span{font-size:11px;color:hsl(var(--muted-foreground))}.history-item.active,.history-item:hover{background:hsl(var(--primary)/.08);border-color:hsl(var(--primary)/.35)}.history-item:disabled{cursor:wait}.history-pages{display:flex;justify-content:space-between;align-items:center;gap:6px;padding-top:12px;font-size:12px}.chat-list{flex:1;min-height:0;overflow:auto;padding:12px 4px}.chat-empty{margin:70px 30px}.opening{display:block;margin:50px auto}.row{display:flex;margin-bottom:22px}.row.user{justify-content:flex-end}.bubble{max-width:88%;padding:14px 18px;border-radius:12px;overflow-wrap:anywhere;white-space:pre-wrap}.user-bubble{background:hsl(var(--primary));color:#fff}.answer-bubble{background:hsl(var(--muted)/.4);min-width:220px}.answer-text{font-size:14px;line-height:1.85;margin:0}.answer-caveat{font-size:12px;color:hsl(var(--muted-foreground));margin:12px 0 0}.answer-footer{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-top:12px;color:hsl(var(--muted-foreground));font-size:11px}.answer-footer :deep(.ant-btn){padding-left:0}.loading-bubble{display:flex;align-items:center;gap:12px;color:hsl(var(--muted-foreground));font-size:13px}.chat-input{display:flex;align-items:flex-end;gap:12px;border-top:1px solid hsl(var(--border));padding-top:16px}.chat-input :deep(textarea){resize:none}.chat-input>.ant-btn{height:42px;flex-shrink:0}.answer-details{max-height:66vh;overflow:auto;padding-right:8px}.answer-details section{margin-bottom:22px}.answer-details h3{font-size:14px;font-weight:600;margin-bottom:8px}.answer-details p{white-space:pre-wrap;line-height:1.8;overflow-wrap:anywhere}.source-link{display:flex;gap:10px;align-items:center;width:100%;padding:12px 0;border-bottom:1px solid hsl(var(--border));text-align:left;cursor:pointer}.source-link>span:nth-child(2){flex:1;overflow-wrap:anywhere}.source-link small{display:block;color:hsl(var(--muted-foreground))}.source-link>span:last-child{font-size:12px;color:hsl(var(--primary));flex-shrink:0}.review-actions{display:flex;gap:10px}.doc-path{overflow-wrap:anywhere;font-size:12px;color:hsl(var(--muted-foreground))}.doc-body{white-space:pre-wrap;overflow:auto;max-height:60vh;background:hsl(var(--muted)/.5);padding:16px;font-family:monospace;font-size:12px;line-height:1.75}.doc-body :deep(mark){background:#ffe58f}.error-text{color:#dc2626}
+@media(max-width:1050px){.qa-main{grid-template-columns:220px minmax(0,1fr)}.conversation-heading>span{display:none}}@media(max-width:760px){.qa-wrap{height:auto;min-height:calc(100vh - 145px)}.qa-main{grid-template-columns:1fr}.history-panel{max-height:250px}.qa-chat{height:65vh}.bubble{max-width:96%}.source-link{flex-wrap:wrap}.settings{display:none}}
 </style>

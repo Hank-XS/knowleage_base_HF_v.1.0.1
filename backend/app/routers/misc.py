@@ -37,22 +37,15 @@ def kb_stats(request: Request, user: User = Depends(current_user)):
 
 
 @router.get("/graph/struct")
-def graph_struct(request: Request, user: User = Depends(current_user)):
-    """图谱全量结构（节点/边/统计），供前端拓扑可视化渲染。"""
-    dump = graph_store.dump()
-    nodes = [
-        {"id": n["id"], "label": n["label"],
-         "name": n["props"].get("name", n["id"]),
-         "props": {k: v for k, v in n["props"].items()
-                   if k in ("code", "meaning", "action", "level", "caliber",
-                            "desc", "kind", "lang", "rule", "type", "system",
-                            "category", "value", "direction", "protocol",
-                            "effective_date", "complexity", "loc")}}
-        for n in dump["nodes"][:1500]
-    ]
-    edges = [{"src": e["src"], "rel": e["rel"], "dst": e["dst"]}
-             for e in dump["edges"][:3000]]
-    return ok({"nodes": nodes, "edges": edges, "stats": graph_store.stats()}, request)
+def graph_struct(request: Request, library: str = '', project: str = '', version: str = '', tag: str = '',
+                 history: bool = False, detail: bool = False, doc_id: str = '', neighbors: bool = True, view: str = 'structure', cross_system: bool = False,
+                 user: User = Depends(current_user)):
+    from ..knowledge.graph_view import build_graph
+    try:
+        return ok(build_graph(graph_store, library=library, project=project, version=version, tag=tag,
+                              history=history, detail=detail, doc_id=doc_id, neighbors=neighbors, view=view, cross_system=cross_system), request)
+    except ValueError as exc:
+        raise KbError('40001', str(exc)) from exc
 
 
 @router.get("/admin/prompts")

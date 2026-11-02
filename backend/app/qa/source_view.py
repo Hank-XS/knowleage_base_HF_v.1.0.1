@@ -29,6 +29,11 @@ def _resolve_file(path_hint: str) -> tuple[str | None, str]:
 
     # 1) 对象存储（kb-raw/...）
     if hint.startswith("kb-raw/") or object_store.exists(hint):
+        if Path(hint).suffix.lower() in {'.docx', '.pdf'}:
+            from ..db import SessionLocal, KbDocVersion
+            with SessionLocal() as db:
+                version = db.query(KbDocVersion).filter(KbDocVersion.object_key == hint).first()
+                return (version.content, hint) if version else (None, hint)
         text = object_store.get_text(hint)
         if text is not None:
             return text, hint

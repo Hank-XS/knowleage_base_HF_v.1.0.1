@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import os
 import tempfile
+import pytest
+
+pytestmark = pytest.mark.usefixtures('sample_seed')
 
 os.environ.setdefault("KB_LLM_API_KEY", "")  # 强制 Mock 模式
 
@@ -32,6 +35,9 @@ def _reset_stores():
     import app.ingest.pipeline as pl
     pl.graph_store = g.graph_store
     pl.vector_store = v.vector_store
+    import app.ingest.tagger as tagger
+    tagger.graph_store = g.graph_store
+    tagger.vector_store = v.vector_store
     with db_mod.SessionLocal() as db2:
         db2.query(db_mod.VerifiedAnswer).delete()
         db2.query(db_mod.QaMessage).delete()

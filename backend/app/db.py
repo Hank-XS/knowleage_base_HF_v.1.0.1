@@ -2,7 +2,7 @@
 import datetime as dt
 import uuid
 
-from sqlalchemy import (JSON, DateTime, Integer, String, Text, UniqueConstraint, create_engine)
+from sqlalchemy import (JSON, DateTime, Integer, String, Text, UniqueConstraint, create_engine, inspect, select, text)
 from sqlalchemy.orm import (DeclarativeBase, Mapped, mapped_column, sessionmaker)
 
 from .config import DATA_DIR, settings
@@ -204,6 +204,11 @@ class KbDocument(Base):
     source_path: Mapped[str] = mapped_column(String(512), default="")  # hf_data 相对路径
     author: Mapped[str] = mapped_column(String(64), default="")
     tags_json: Mapped[JSON] = mapped_column(JSON, default=list)
+    asset_type: Mapped[str] = mapped_column(String(32), default='document', index=True)
+    project: Mapped[str] = mapped_column(String(100), default='', index=True)
+    purpose: Mapped[str] = mapped_column(String(32), default='reference', index=True)
+    project_job: Mapped[str] = mapped_column(String(32), default='', index=True)
+    is_current: Mapped[int] = mapped_column(Integer, default=1, index=True)
     uploaded_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
@@ -216,6 +221,8 @@ class KbDocVersion(Base):
     doc_id: Mapped[str] = mapped_column(String(32), index=True)
     version: Mapped[str] = mapped_column(String(32))
     content: Mapped[str] = mapped_column(Text, default="")
+    object_key: Mapped[str] = mapped_column(String(512), default='')
+    meta_json: Mapped[JSON] = mapped_column(JSON, default=dict)
     created_by: Mapped[str] = mapped_column(String(64), default="system")
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -231,7 +238,53 @@ class KbDocChunk(Base):
     text: Mapped[str] = mapped_column(Text, default="")
     start_offset: Mapped[int] = mapped_column(Integer, default=0)
     end_offset: Mapped[int] = mapped_column(Integer, default=0)
+    meta_json: Mapped[JSON] = mapped_column(JSON, default=dict)
 
 
 def init_db() -> None:
     Base.metadata.create_all(engine)
+    additions = {
+        't_kb_document': {'asset_type': "VARCHAR(32) DEFAULT 'document'", 'project': "VARCHAR(100) DEFAULT ''",
+                          'purpose': "VARCHAR(32) DEFAULT 'reference'", 'project_job': "VARCHAR(32) DEFAULT ''",
+                          'is_current': 'INTEGER DEFAULT 1'},
+        't_kb_doc_version': {'object_key': "VARCHAR(512) DEFAULT ''", 'meta_json': "JSON DEFAULT '{}'"},
+        't_kb_doc_chunk': {'meta_json': "JSON DEFAULT '{}'"},
+    }
+    inspector = inspect(engine)
+    with engine.begin() as connection:
+        for table, columns in additions.items():
+            existing = {column['name'] for column in inspector.get_columns(table)}
+            for name, definition in columns.items():
+                if name not in existing:
+                    connection.execute(text(f'ALTER TABLE {table} ADD COLUMN {name} {definition}'))
+    # Older project imports already have an immutable job ID in their source path.
+    # Recover classification without reparsing code or changing existing chunks.
+    with SessionLocal() as db:
+        latest = set()
+        jobs = db.scalars(select(IngestJob).where(IngestJob.source_type == 'code_project')
+                          .order_by(IngestJob.created_at.desc())).all()
+        for job in jobs:
+            options = job.options_json or {}
+            identity = (options.get('library'), options.get('project'))
+            current = job.status == 'done' and options.get('active', False) and identity not in latest
+            if current:
+                latest.add(identity)
+            rows = db.scalars(select(KbDocument).where(KbDocument.project_job == '',
+                              KbDocument.source_path.startswith(f'kb-raw/projects/{job.id}/source/')))
+            for doc in rows:
+                doc.asset_type, doc.project_job, doc.purpose = 'code', job.id, 'source'
+                doc.project, doc.tags_json, doc.is_current = options.get('project', ''), options.get('tags', []), int(bool(current))
+        # The former diff page appended an automatic demo version on first visit.
+        # Point code previews back to their uploaded version; retain every stored row.
+        db.flush()
+        jobs_by_id = {job.id: job for job in jobs}
+        for doc in db.scalars(select(KbDocument).where(KbDocument.asset_type == 'code')):
+            doc.doc_type = doc.doc_type.lower()
+            job = jobs_by_id.get(doc.project_job)
+            expected = job.options_json.get('version') if job else ''
+            if expected and doc.version != expected:
+                generated = db.scalar(select(KbDocVersion).where(KbDocVersion.doc_id == doc.id, KbDocVersion.version == doc.version))
+                uploaded = db.scalar(select(KbDocVersion.id).where(KbDocVersion.doc_id == doc.id, KbDocVersion.version == expected))
+                if uploaded and generated and generated.created_by == 'system' and '自动生成对比版本' in generated.content:
+                    doc.version = expected
+        db.commit()

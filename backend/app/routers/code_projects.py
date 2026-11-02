@@ -1,5 +1,6 @@
 """Project upload and task/result APIs. All source reads are constrained to the manifest."""
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
+import json
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
@@ -22,14 +23,14 @@ def get_project(job_id: str) -> IngestJob:
 @router.post('')
 async def upload(request: Request, file: UploadFile = File(...), project: str = Form(...),
                  version: str = Form(...), library: str = Form('code-projects'),
-                 encoding: str = Form('utf-8'), user: User = Depends(require_roles('dev', 'gov', 'admin'))):
+                 encoding: str = Form('utf-8'), tags: str = Form('[]'), user: User = Depends(require_roles('dev', 'gov', 'admin'))):
     if not (file.filename or '').lower().endswith('.zip'):
         raise KbError('40001', '代码工程请上传 ZIP 文件')
     content = await file.read(projects.MAX_UPLOAD + 1)
     try:
         job_id = await run_in_threadpool(projects.create_project, content, file.filename, project,
-                                        version, library, encoding, user.username)
-    except ValueError as exc:
+                                        version, library, encoding, user.username, json.loads(tags))
+    except (ValueError, TypeError) as exc:
         raise KbError('40001', str(exc)) from exc
     payload = projects.job_payload(get_project(job_id))
     projects.submit(job_id)
@@ -62,7 +63,7 @@ def retry(job_id: str, request: Request, user: User = Depends(require_roles('dev
     opts = job.options_json
     new_id = projects.create_project((projects.snapshot_root(job_id) / 'upload.zip').read_bytes(),
                                      opts['filename'], opts['project'], opts['version'],
-                                     opts['library'], opts['encoding'], user.username)
+                                     opts['library'], opts['encoding'], user.username, opts.get('tags', []))
     payload = projects.job_payload(get_project(new_id))
     projects.submit(new_id)
     return ok(payload, request)

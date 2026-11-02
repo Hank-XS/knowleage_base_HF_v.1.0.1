@@ -1,0 +1,24 @@
+# GitHub source archives contain code, templates and documentation only.
+backend/data/* export-ignore
+backend/data/README.md -export-ignore
+hf_data/* export-ignore
+hf_data/README.md -export-ignore
+backend/.local export-ignore
+backend/tests/fixtures export-ignore
+.local export-ignore
+.local-runtime export-ignore
+.local-tools export-ignore
+release export-ignore
+artifacts export-ignore
+**/node_modules export-ignore
+**/__pycache__ export-ignore
+**/.venv export-ignore
+**/dist export-ignore
+**/.pytest_cache export-ignore
+**/test-results export-ignore
+**/playwright-report export-ignore
+*.zip export-ignore
+*.sqlite3 export-ignore
+*.db export-ignore
+*.log export-ignore
+/*.docx export-ignore

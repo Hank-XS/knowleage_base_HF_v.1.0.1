@@ -100,6 +100,65 @@ def test_real_parser_upload_graph_chunks_source_and_index(setup_project):
     assert client.get('/api/v1/code-projects/not-a-job/graph').status_code == 404
 
 
+def test_long_structures_stay_whole_and_file_fallback_stays_bounded(setup_project):
+    client, sessions, _, vectors = setup_project
+    lines = [
+        '       IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. LONG-PROGRAM.',
+        '       DATA DIVISION.',
+        '       WORKING-STORAGE SECTION.',
+        '       01 LONG-RECORD.',
+        *[f'          05 ITEM-{i:03d} PIC X.' for i in range(110)],
+        '       PROCEDURE DIVISION.',
+        '       PROCESS-SECTION SECTION.',
+        '       LONG-PARAGRAPH.',
+        *["           DISPLAY 'ROW'" for _ in range(138)],
+        "           DISPLAY 'ROW'.",
+        '       SHORT-PARAGRAPH.',
+        '           GOBACK.',
+        '       NEXT-SECTION SECTION.',
+        '       EXIT-PARAGRAPH.',
+        '           GOBACK.',
+    ]
+    source = '\n'.join(lines) + '\n'
+    job_id = upload(client, {
+        'src/LONG.cbl': source.encode('utf-8'),
+        'src/NOTES.cbl': b'      * No structural unit in this file.\n' * 205,
+    })
+    detail = run(client, job_id)
+    chunks = client.get(f'/api/v1/code-projects/{job_id}/chunks',
+                        params={'page_size': 100}).json()['data']['items']
+    nodes = client.get(f'/api/v1/code-projects/{job_id}/graph').json()['data']['nodes']
+    structural = [c for c in chunks if c['node_id']]
+    for title in ('LONG-PARAGRAPH', 'PROCESS-SECTION', 'LONG-RECORD'):
+        matching = [c for c in structural if c['title'] == title]
+        assert len(matching) == 1, f'{title} must remain a single complete chunk'
+        assert matching[0]['end_line'] - matching[0]['start_line'] + 1 > 100
+    paragraph = next(c for c in structural if c['title'] == 'LONG-PARAGRAPH')
+    assert paragraph['start_line'] == lines.index('       LONG-PARAGRAPH.') + 1
+    assert paragraph['end_line'] == lines.index('       SHORT-PARAGRAPH.')
+    assert paragraph['end_line'] - paragraph['start_line'] + 1 == 140
+
+    by_id = {n['id']: n['props'] for n in nodes}
+    source_lines = source.splitlines(keepends=True)
+    for chunk in structural:
+        node = by_id[chunk['node_id']]
+        assert sum(c['node_id'] == chunk['node_id'] for c in structural) == 1
+        assert (chunk['start_line'], chunk['end_line']) == (node['start_line'], node['end_line'])
+        expected = ''.join(source_lines[chunk['start_line'] - 1:chunk['end_line']])
+        assert chunk['text'] == expected
+        assert source[chunk['start_offset']:chunk['end_offset']] == expected
+
+    fallback = [c for c in chunks if c['path'] == 'src/NOTES.cbl']
+    assert [(c['start_line'], c['end_line']) for c in fallback] == [(1, 100), (101, 200), (201, 205)]
+    assert all(c['node_id'] == '' for c in fallback)
+    assert not next(f for f in detail['files'] if f['path'] == 'src/NOTES.cbl')['structural_chunks']
+    with sessions() as db:
+        assert db.get(KbDocChunk, paragraph['id']).text == paragraph['text']
+    assert next(c for c in vectors._data['kb_code_chunk']
+                if c['id'] == paragraph['id'])['meta']['text'] == paragraph['text']
+
+
 def test_reupload_replaces_only_same_project_version(setup_project):
     client, sessions, graph, vectors = setup_project
     first = upload(client)

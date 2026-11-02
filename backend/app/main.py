@@ -81,7 +81,8 @@ def startup() -> None:
     seed_users()
     ensure_vocab()
     ensure_prompt_defaults()
-    seed_knowledge()
+    if settings.kb_auto_import:
+        seed_knowledge()
     try:
         from .knowledge.manage import ensure_synced
         ensure_synced()

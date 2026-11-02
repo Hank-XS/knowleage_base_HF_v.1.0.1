@@ -1,568 +1,87 @@
 <script lang="ts" setup>
-import type { KmDoc, KmLibrary } from '#/api/kb';
-
-import { computed, onMounted, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
-
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { Page } from '@vben/common-ui';
-
-import {
-  Button as AButton,
-  Empty as AEmpty,
-  InputSearch as AInputSearch,
-  Modal,
-  Select as ASelect,
-  Space as ASpace,
-  Spin as ASpin,
-  Table as ATable,
-  Tag as ATag,
-  Tooltip as ATooltip,
-  Tree as ATree,
-  message,
-} from 'ant-design-vue';
-
-import {
-  batchKmDocStatus,
-  deleteKmDoc,
-  getKmDoc,
-  listKmDocs,
-  listKmLibraries,
-  syncKmDataset,
-} from '#/api/kb';
-
+import { Alert, Button, Card, Checkbox, Drawer, Dropdown, Empty, InputSearch, Menu, MenuItem, Select, Space, Table, Tag, message } from 'ant-design-vue';
+import { getAssets, getCatalog, type Asset, type CatalogOptions } from '#/api/catalog';
+import { listKmDocs, type KmDoc } from '#/api/kb';
+import { confirmCleanup } from '../cleanup';
 defineOptions({ name: 'KnowledgeDocs' });
-
-const router = useRouter();
-
-const loading = ref(false);
-const folderKeyword = ref('');
-const libraries = ref<KmLibrary[]>([]);
-const selectedKb = ref('');
-const docKeyword = ref('');
-const filterType = ref<string>();
-const filterStatus = ref<string>();
-const filterVersion = ref<string>();
-const filterVector = ref<string>();
-const filterOfficial = ref<string>();
-const filterSecurity = ref<string>();
-const page = ref(1);
-const pageSize = 10;
-const total = ref(0);
-const docs = ref<KmDoc[]>([]);
-const selectedRowKeys = ref<string[]>([]);
-const previewOpen = ref(false);
-const previewDoc = ref<KmDoc | null>(null);
-const syncing = ref(false);
-
-const filteredLibraries = computed(() => {
-  const kw = folderKeyword.value.trim().toLowerCase();
-  if (!kw) return libraries.value;
-  const match = (f: KmLibrary): KmLibrary | null => {
-    const children = (f.children || [])
-      .map(match)
-      .filter(Boolean) as KmLibrary[];
-    if (f.title.toLowerCase().includes(kw) || children.length) {
-      return { ...f, children: children.length ? children : f.children };
-    }
-    return null;
-  };
-  return libraries.value.map(match).filter(Boolean) as KmLibrary[];
-});
-
-const treeData = computed(() =>
-  filteredLibraries.value.map((f) => ({
-    key: f.key,
-    title: f.title,
-    count: f.count,
-    children: (f.children || []).map((c) => ({
-      key: c.key,
-      title: c.title,
-      count: c.count,
-      isLeaf: true,
-    })),
-  })),
-);
-
-const currentKbTitle = computed(() => {
-  const top = selectedKb.value.split('/')[0];
-  const found = libraries.value.find((f) => f.key === top);
-  if (found) {
-    if (selectedKb.value.includes('/')) {
-      const child = found.children?.find((c) => c.key === selectedKb.value);
-      return child ? `${found.title} / ${child.title}` : found.title;
-    }
-    return found.title;
-  }
-  return selectedKb.value || '全部知识库';
-});
-
-const columns = [
-  { title: '文档名称', dataIndex: 'name', key: 'name', ellipsis: true },
-  { title: '类型', dataIndex: 'type', key: 'type', width: 70 },
-  { title: '版本', dataIndex: 'version', key: 'version', width: 80 },
-  { title: '状态', dataIndex: 'status', key: 'status', width: 90 },
-  { title: '向量化', dataIndex: 'vectorized', key: 'vectorized', width: 100 },
-  { title: '官方属性', dataIndex: 'official', key: 'official', width: 100 },
-  { title: '安全等级', dataIndex: 'security', key: 'security', width: 90 },
-  { title: '大小', dataIndex: 'size', key: 'size', width: 70 },
-  { title: '上传时间', dataIndex: 'uploadedAt', key: 'uploadedAt', width: 170 },
-  { title: '操作', key: 'actions', width: 140, fixed: 'right' },
-];
-
-function statusLabel(s: string) {
-  return ({ draft: '草稿', review: '审核中', published: '已发布' } as any)[s] || s;
+const route = useRoute(); const router = useRouter();
+const catalog = ref<CatalogOptions>({ libraries: [], projects: [], purposes: [], tags: [] });
+const library = ref(String(route.query.kb || '')); const project = ref(String(route.query.project || ''));
+const type = ref(''); const purpose = ref(''); const tag = ref(''); const keyword = ref(''); const history = ref(false);
+const loading = ref(false); const rows = ref<Asset[]>([]); const page = ref(1); const total = ref(0);
+const stats = ref({ projects: 0, documents: 0, files: 0, chunks: 0 });
+const opened = ref<Asset>(); const fileRows = ref<KmDoc[]>([]); const filePage = ref(1); const fileTotal = ref(0); const fileKeyword = ref(''); const fileLoading = ref(false);
+let timer: ReturnType<typeof setTimeout> | undefined; let request = 0;
+const systems = computed(() => catalog.value.libraries.flatMap(l => [{ label: l.title, value: l.key }, ...(l.children || []).map(c => ({ label: `${l.title} / ${c.title}`, value: c.key }))]));
+const projects = computed(() => [...new Set(catalog.value.projects.filter(p => !library.value || p.library === library.value).map(p => p.name))].map(name => ({ label: name, value: name })));
+const columns = [{ title: '资料 / 工程', key: 'name' }, { title: '归属与用途', key: 'classification' }, { title: '版本', key: 'version', width: 120 }, { title: '主题标签', key: 'tags' }, { title: '处理状态', key: 'status', width: 130 }, { title: '上传时间', dataIndex: 'uploadedAt', key: 'time', width: 170 }, { title: '操作', key: 'actions', width: 230 }];
+const fileColumns = [{ title: '文件路径', dataIndex: 'name', key: 'name' }, { title: '文件角色', key: 'role', width: 140 }, { title: '操作', key: 'actions', width: 250 }];
+const purposeName = (value: string) => catalog.value.purposes.find(p => p.value === value)?.label || (value === 'source' ? '工程源码' : '参考资料');
+const systemName = (key: string) => systems.value.find(l => l.value === key)?.label || key;
+async function load() {
+  clearTimeout(timer); const id = ++request; loading.value = true;
+  try { const data = await getAssets({ kb: library.value, project: project.value, asset_type: type.value, purpose: purpose.value, tag: tag.value, keyword: keyword.value, history: history.value, page: page.value });
+    if (id !== request) return; rows.value = data.items; total.value = data.total; stats.value = data.stats;
+    if (rows.value.some(r => ['queued', 'running'].includes(r.attempt_status || r.status))) timer = setTimeout(load, 3000);
+  } catch (e: any) { message.error(e.message || '读取资料失败'); } finally { if (id === request) loading.value = false; }
 }
-function securityLabel(s: string) {
-  return (
-    ({
-      public: '公开',
-      internal: '内部',
-      secret: '秘密',
-      confidential: '机密',
-    } as any)[s] || s
-  );
+async function loadFiles() {
+  if (!opened.value) return; fileLoading.value = true;
+  try { const data = await listKmDocs({ project_job: opened.value.id, history: true, keyword: fileKeyword.value, page: filePage.value, page_size: 15 }); fileRows.value = data.items; fileTotal.value = data.total; }
+  finally { fileLoading.value = false; }
 }
-
-async function loadLibraries() {
-  try {
-    libraries.value = await listKmLibraries();
-    if (!selectedKb.value && libraries.value[0]) {
-      selectedKb.value = libraries.value[0].key;
-    }
-  } catch (e: any) {
-    message.error(e?.message || '加载知识库失败');
-    libraries.value = [];
-  }
-}
-
-async function loadDocs() {
-  loading.value = true;
-  try {
-    const res = await listKmDocs({
-      kb: selectedKb.value,
-      keyword: docKeyword.value || undefined,
-      type: filterType.value || undefined,
-      status: filterStatus.value || undefined,
-      version: filterVersion.value || undefined,
-      vectorized: filterVector.value || undefined,
-      official: filterOfficial.value || undefined,
-      security: filterSecurity.value || undefined,
-      page: page.value,
-      page_size: pageSize,
-    });
-    docs.value = res.items || [];
-    total.value = res.total || 0;
-  } catch (e: any) {
-    message.error(e?.message || '加载文档失败');
-    docs.value = [];
-    total.value = 0;
-  } finally {
-    loading.value = false;
-  }
-}
-
-function onSelectKb(keys: (string | number)[]) {
-  if (keys[0]) {
-    selectedKb.value = String(keys[0]);
-    page.value = 1;
-  }
-}
-
-function goUpload() {
-  router.push({ path: '/knowledge/upload', query: { kb: selectedKb.value } });
-}
-
-async function openPreview(doc: KmDoc) {
-  try {
-    previewDoc.value = await getKmDoc(doc.id);
-    previewOpen.value = true;
-  } catch {
-    message.error('预览失败');
-  }
-}
-
-function onDelete(doc: KmDoc) {
-  Modal.confirm({
-    title: '确认删除',
-    content: `确定删除文档「${doc.name}」？`,
-    onOk: async () => {
-      await deleteKmDoc(doc.id);
-      message.success('已删除');
-      await loadDocs();
-      await loadLibraries();
-    },
-  });
-}
-
-async function batchAudit(submit: boolean) {
-  if (!selectedRowKeys.value.length) {
-    message.warning('请先勾选文档');
-    return;
-  }
-  const res = await batchKmDocStatus({
-    action: submit ? 'submit' : 'audit',
-    doc_ids: selectedRowKeys.value,
-    status: submit ? 'review' : 'published',
-  });
-  message.success(`已更新 ${res.updated} 条`);
-  selectedRowKeys.value = [];
-  await loadDocs();
-}
-
-async function doSync() {
-  syncing.value = true;
-  try {
-    const res = await syncKmDataset(true);
-    message.success(
-      res.synced
-        ? `同步完成，文档 ${res.docs} 条`
-        : `同步结果：${res.reason || 'ok'}`,
-    );
-    await loadLibraries();
-    await loadDocs();
-  } catch (e: any) {
-    message.error(e?.message || '同步失败');
-  } finally {
-    syncing.value = false;
-  }
-}
-
-watch(
-  [
-    selectedKb,
-    filterType,
-    filterStatus,
-    filterVersion,
-    filterVector,
-    filterOfficial,
-    filterSecurity,
-  ],
-  () => {
-    page.value = 1;
-    loadDocs();
-  },
-);
-
-onMounted(async () => {
-  await loadLibraries();
-  await loadDocs();
-});
+async function openFiles(asset: Asset) { opened.value = asset; filePage.value = 1; fileKeyword.value = ''; await loadFiles(); }
+function openChunk(id: string) { router.push({ path: '/knowledge/chunk', query: { doc: id } }); }
+function graph(asset: Asset) { router.push({ path: '/kb/graph', query: asset.asset_type === 'project' ? { library: asset.library, project: asset.project, version: asset.version } : { doc: asset.id } }); }
+async function cleanup(asset: Asset, target: 'chunks' | 'graph') { await confirmCleanup({ target, ...(asset.asset_type === 'project' ? { job_id: asset.id } : { doc_id: asset.id, version: asset.version }) }, async () => { await load(); catalog.value = await getCatalog(); }); }
+watch(library, () => { project.value = ''; }, { flush: 'sync' });
+watch([library, project, type, purpose, tag, history], () => { page.value = 1; void load(); });
+async function refresh() { library.value = String(route.query.kb || library.value || ''); project.value = String(route.query.project || project.value || ''); catalog.value = await getCatalog(); await load(); }
+onMounted(refresh);
+watch(() => route.fullPath, () => { if (route.path === '/knowledge/docs') void refresh(); else { clearTimeout(timer); request++; loading.value = false; } });
+onBeforeUnmount(() => { clearTimeout(timer); request++; });
 </script>
-
 <template>
-  <Page auto-content-height content-class="km-page">
-    <div class="km-docs">
-      <aside class="km-side">
-        <div class="km-side-head">
-          <span>知识库列表</span>
-          <ATooltip title="从 hf_data 强制同步">
-            <AButton type="link" size="small" :loading="syncing" @click="doSync">
-              同步
-            </AButton>
-          </ATooltip>
-        </div>
-        <AInputSearch
-          v-model:value="folderKeyword"
-          placeholder="搜索知识库"
-          enter-button="搜索"
-          size="middle"
-        />
-        <ASpace class="km-side-actions">
-          <AButton size="small" @click="batchAudit(true)">批量提交审核</AButton>
-          <AButton size="small" type="primary" ghost @click="batchAudit(false)">
-            批量审核
-          </AButton>
-        </ASpace>
-        <ATree
-          v-if="treeData.length"
-          :tree-data="treeData"
-          :selected-keys="selectedKb ? [selectedKb] : []"
-          default-expand-all
-          block-node
-          @select="onSelectKb"
-        >
-          <template #title="{ title, count, dataRef }">
-            <div class="km-tree-node">
-              <span>{{ title }}</span>
-              <span class="km-tree-count">{{ count ?? dataRef?.count }}</span>
-            </div>
-          </template>
-        </ATree>
-        <AEmpty v-else description="无知识库，请先同步" />
-      </aside>
-
-      <section class="km-main">
-        <div class="km-main-head">
-          <div>
-            <h2>{{ currentKbTitle }}</h2>
-            <p>管理知识库中的所有文档，支持上传、编辑和删除</p>
-          </div>
-          <AButton type="primary" @click="goUpload">+ 新增上传</AButton>
-        </div>
-
-        <div class="km-filters">
-          <AInputSearch
-            v-model:value="docKeyword"
-            placeholder="搜索文档名称..."
-            enter-button="搜索"
-            style="width: 260px"
-            @search="
-              () => {
-                page = 1;
-                loadDocs();
-              }
-            "
-          />
-          <ASelect
-            v-model:value="filterType"
-            allow-clear
-            placeholder="全部类型"
-            style="width: 120px"
-            :options="[
-              { label: 'md', value: 'md' },
-              { label: 'cbl', value: 'cbl' },
-              { label: 'yaml', value: 'yaml' },
-              { label: 'json', value: 'json' },
-              { label: 'jcl', value: 'jcl' },
-              { label: 'csv', value: 'csv' },
-              { label: 'py', value: 'py' },
-              { label: 'java', value: 'java' },
-            ]"
-          />
-          <ASelect
-            v-model:value="filterStatus"
-            allow-clear
-            placeholder="全部状态"
-            style="width: 120px"
-            :options="[
-              { label: '草稿', value: 'draft' },
-              { label: '审核中', value: 'review' },
-              { label: '已发布', value: 'published' },
-            ]"
-          />
-          <ASelect
-            v-model:value="filterVersion"
-            allow-clear
-            placeholder="全部版本"
-            style="width: 120px"
-            :options="[
-              { label: 'v1.0', value: 'v1.0' },
-              { label: 'v1.1', value: 'v1.1' },
-              { label: 'v2.0', value: 'v2.0' },
-              { label: 'v3.2.1', value: 'v3.2.1' },
-            ]"
-          />
-          <ASelect
-            v-model:value="filterVector"
-            allow-clear
-            placeholder="全部向量化状态"
-            style="width: 150px"
-            :options="[
-              { label: '已向量化', value: 'yes' },
-              { label: '未向量化', value: 'no' },
-            ]"
-          />
-          <ASelect
-            v-model:value="filterOfficial"
-            allow-clear
-            placeholder="全部官方属性"
-            style="width: 140px"
-            :options="[
-              { label: '官方知识', value: 'yes' },
-              { label: '非官方知识', value: 'no' },
-            ]"
-          />
-          <ASelect
-            v-model:value="filterSecurity"
-            allow-clear
-            placeholder="全部安全等级"
-            style="width: 140px"
-            :options="[
-              { label: '公开', value: 'public' },
-              { label: '内部', value: 'internal' },
-              { label: '秘密', value: 'secret' },
-              { label: '机密', value: 'confidential' },
-            ]"
-          />
-        </div>
-
-        <div class="km-table-card">
-          <div class="km-table-title">
-            文档列表
-            <span>共 {{ total }} 条</span>
-          </div>
-          <ASpin :spinning="loading">
-            <ATable
-              row-key="id"
-              size="middle"
-              :columns="columns"
-              :data-source="docs"
-              :row-selection="{
-                selectedRowKeys,
-                onChange: (keys) => (selectedRowKeys = keys.map(String)),
-              }"
-              :pagination="{
-                current: page,
-                pageSize,
-                total,
-                showSizeChanger: false,
-                showTotal: (t, range) =>
-                  `显示 ${range[0]}-${range[1]} 条，共 ${t} 条`,
-                onChange: (p) => {
-                  page = p;
-                  loadDocs();
-                },
-              }"
-              :scroll="{ x: 1100 }"
-            >
-              <template #bodyCell="{ column, record }">
-                <template v-if="column.key === 'name'">
-                  <a @click="openPreview(record as KmDoc)">{{ record.name }}</a>
-                </template>
-                <template v-else-if="column.key === 'status'">
-                  {{ statusLabel(record.status) }}
-                </template>
-                <template v-else-if="column.key === 'vectorized'">
-                  <span :class="record.vectorized ? 'ok' : 'muted'">
-                    {{ record.vectorized ? '已向量化' : '未向量化' }}
-                  </span>
-                </template>
-                <template v-else-if="column.key === 'official'">
-                  <ATag :color="record.official ? 'blue' : 'default'">
-                    {{ record.official ? '官方知识' : '非官方知识' }}
-                  </ATag>
-                </template>
-                <template v-else-if="column.key === 'security'">
-                  <ATag
-                    :color="record.security === 'public' ? 'success' : 'orange'"
-                  >
-                    {{ securityLabel(record.security) }}
-                  </ATag>
-                </template>
-                <template v-else-if="column.key === 'actions'">
-                  <ASpace>
-                    <AButton
-                      type="link"
-                      size="small"
-                      @click="openPreview(record as KmDoc)"
-                    >
-                      预览
-                    </AButton>
-                    <AButton
-                      type="link"
-                      danger
-                      size="small"
-                      @click="onDelete(record as KmDoc)"
-                    >
-                      删除
-                    </AButton>
-                  </ASpace>
-                </template>
-              </template>
-            </ATable>
-          </ASpin>
-        </div>
-      </section>
-    </div>
-
-    <Modal
-      v-model:open="previewOpen"
-      :title="previewDoc?.name"
-      width="720px"
-      :footer="null"
-    >
-      <pre class="km-preview">{{ previewDoc?.content || '（无正文预览）' }}</pre>
-    </Modal>
+  <Page>
+    <div class="header"><div><small>内容管理 / 全部资产</small><h1>知识库列表</h1><p>按系统归档，按工程聚合，让资料和代码保持清晰的关系。</p></div><Button type="primary" size="large" @click="router.push({ path: '/knowledge/upload', query: { kb: library } })">上传资料</Button></div>
+    <div class="metrics"><Card v-for="m in [{ label: history ? '工程版本' : '代码工程', value: stats.projects }, { label: '文档资料', value: stats.documents }, { label: history ? '文件（含历史）' : '文件', value: stats.files }, { label: history ? '切片（含历史）' : '切片', value: stats.chunks }]" :key="m.label"><span>{{ m.label }}</span><strong>{{ m.value.toLocaleString() }}</strong></Card></div>
+    <Card class="catalog-card">
+      <div class="filters">
+        <Select :value="library || undefined" @update:value="library = String($event || '')" allow-clear :options="systems" placeholder="全部系统" show-search option-filter-prop="label" @clear="library = ''" />
+        <Select :value="project || undefined" @update:value="project = String($event || '')" allow-clear :options="projects" placeholder="全部工程" show-search option-filter-prop="label" @clear="project = ''" />
+        <Select v-model:value="type" :options="[{ label: '全部资料', value: '' }, { label: '代码工程', value: 'project' }, { label: '文档资料', value: 'document' }]" />
+        <Select :value="purpose || undefined" @update:value="purpose = String($event || '')" allow-clear :options="catalog.purposes" placeholder="全部用途" @clear="purpose = ''" />
+        <Select :value="tag || undefined" @update:value="tag = String($event || '')" allow-clear :options="catalog.tags.map(t => ({ label: t.value, value: t.value }))" placeholder="主题标签" show-search @clear="tag = ''" />
+        <InputSearch v-model:value="keyword" placeholder="搜索名称、工程或标签" @search="page = 1; load()" />
+      </div>
+      <div class="list-caption"><span>共 {{ total }} 项资料 · 工程按整包聚合，文件在工程内查看</span><Checkbox v-model:checked="history">显示历史工程版本</Checkbox><Button size="small" @click="load">刷新</Button></div>
+      <Table :columns="columns" :data-source="rows" row-key="id" :loading="loading" :scroll="{ x: 1000 }" :pagination="{ current: page, total, pageSize: 20, showSizeChanger: false }" @change="p => { page = p.current || 1; load(); }">
+        <template #emptyText><Empty description="还没有资料，上传文档或代码工程开始建立知识库"><Button type="primary" @click="router.push('/knowledge/upload')">上传第一份资料</Button></Empty></template>
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'name'"><div class="asset-name"><Tag :color="record.asset_type === 'project' ? 'blue' : 'cyan'">{{ record.asset_type === 'project' ? '工程' : '文档' }}</Tag><strong>{{ record.name }}</strong></div><small v-if="record.asset_type === 'project'">{{ record.file_count }} 个文件 · {{ record.program_count }} 个程序 · {{ record.copybook_count }} 个 Copybook</small></template>
+          <template v-else-if="column.key === 'classification'"><div>{{ systemName(record.library) }}</div><small>{{ record.project || '系统通用' }} · {{ purposeName(record.purpose) }}</small></template>
+          <template v-else-if="column.key === 'version'"><div>{{ record.version }}</div><small>{{ record.is_current ? '当前版本' : ['queued', 'running', 'failed'].includes(record.status) ? '待入库版本' : '历史版本' }}</small></template>
+          <template v-else-if="column.key === 'tags'"><Tag v-for="t in record.tags" :key="t" @click="tag = t" style="cursor:pointer">{{ t }}</Tag><small v-if="!record.tags.length">未添加主题标签</small></template>
+          <template v-else-if="column.key === 'status'"><Tag :color="['done','published'].includes(record.status) ? 'green' : record.status === 'failed' ? 'red' : 'blue'">{{ ({ done: '已入库', published: '已入库', queued: '等待解析', running: '解析中', failed: '处理失败', draft: '已保存' } as any)[record.status] || record.status }}</Tag><div><small>{{ record.chunk_count }} 个切片</small></div><small v-if="record.error" class="error">{{ record.error }}</small><small v-if="record.warnings">{{ record.warnings }} 个文件需关注</small><div v-if="record.attempt_status && record.attempt_status !== 'done'" class="attempt"><Tag :color="record.attempt_status === 'failed' ? 'orange' : 'blue'">{{ record.attempt_version }} {{ record.attempt_status === 'failed' ? '更新失败' : '更新中' }}</Tag><small v-if="record.attempt_status === 'failed'" class="error">{{ record.attempt_error }}</small></div></template>
+          <template v-else-if="column.key === 'time'">{{ record.uploadedAt.slice(0,19).replace('T',' ') }}</template>
+          <template v-else-if="column.key === 'actions'"><Space><Button type="link" @click="record.asset_type === 'project' ? openFiles(record as Asset) : openChunk(record.id)">{{ record.asset_type === 'project' ? '查看文件' : '查看切片' }}</Button><Button type="link" @click="graph(record as Asset)">图谱</Button><Dropdown><Button type="link">清理</Button><template #overlay><Menu><MenuItem @click="cleanup(record as Asset, 'chunks')">清理此版本切片</MenuItem><MenuItem @click="cleanup(record as Asset, 'graph')">清理此版本图谱</MenuItem></Menu></template></Dropdown></Space></template>
+        </template>
+      </Table>
+    </Card>
+    <Drawer :open="!!opened" :title="opened ? `${opened.name} · ${opened.version}` : ''" width="min(850px, 95vw)" @close="opened = undefined">
+      <template #extra><Button v-if="opened" type="link" @click="router.push(`/kb/code-projects/${opened.id}`)">解析报告</Button></template>
+      <Alert v-if="opened?.error" type="error" :message="opened.error" show-icon />
+      <p class="drawer-description">保留 ZIP 中的文件路径，可从任一文件进入切片与源码。</p>
+      <InputSearch v-model:value="fileKeyword" placeholder="搜索文件名或路径" @search="filePage = 1; loadFiles()" />
+      <Table :columns="fileColumns" :data-source="fileRows" row-key="id" :loading="fileLoading" :pagination="{ current: filePage, total: fileTotal, pageSize: 15, showSizeChanger: false }" @change="p => { filePage = p.current || 1; loadFiles(); }">
+        <template #bodyCell="{ column, record }"><template v-if="column.key === 'role'"><Tag>{{ record.type === 'cpy' ? record.name.includes('cpy-bms/') ? 'BMS Copybook' : 'Copybook' : 'COBOL 程序' }}</Tag></template><Space v-else-if="column.key === 'actions'"><Button type="link" @click="openChunk(record.id)">查看切片</Button><Button type="link" @click="router.push({ path: '/kb/graph', query: { doc: record.id } }); opened = undefined">代码关系图</Button><Button type="link" @click="router.push({ path: '/knowledge/diff', query: { doc: record.id } }); opened = undefined">版本对比</Button></Space></template>
+      </Table>
+    </Drawer>
   </Page>
 </template>
-
 <style scoped>
-.km-docs {
-  display: grid;
-  grid-template-columns: 280px 1fr;
-  gap: 12px;
-  min-height: 640px;
-}
-.km-side,
-.km-main,
-.km-table-card {
-  background: hsl(var(--card));
-  border: 1px solid hsl(var(--border));
-  border-radius: 10px;
-}
-.km-side {
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  overflow: auto;
-}
-.km-side-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-weight: 600;
-}
-.km-tree-node {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-}
-.km-tree-count {
-  color: #8c8c8c;
-  font-size: 12px;
-}
-.km-main {
-  padding: 16px 18px;
-  overflow: auto;
-}
-.km-main-head {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 14px;
-}
-.km-main-head h2 {
-  margin: 0;
-  font-size: 20px;
-}
-.km-main-head p {
-  margin: 4px 0 0;
-  color: #8c8c8c;
-  font-size: 13px;
-}
-.km-filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-.km-table-card {
-  padding: 8px 12px 4px;
-}
-.km-table-title {
-  display: flex;
-  justify-content: space-between;
-  padding: 8px 4px 12px;
-  font-weight: 600;
-}
-.km-table-title span {
-  font-weight: 400;
-  color: #8c8c8c;
-}
-.muted {
-  color: #8c8c8c;
-}
-.ok {
-  color: #389e0d;
-}
-.km-preview {
-  white-space: pre-wrap;
-  background: #f7f8fa;
-  padding: 12px;
-  border-radius: 8px;
-  max-height: 480px;
-  overflow: auto;
-  font-size: 13px;
-}
+.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}.header h1{font-size:26px;margin:6px 0}.header p,small{color:#64748b}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}.metrics span{color:#64748b}.metrics strong{display:block;font-size:28px;margin-top:8px}.filters{display:flex;flex-wrap:wrap;gap:12px}.filters>.ant-select{min-width:150px;flex:1}.filters>.ant-input-group-wrapper{width:260px}.list-caption{display:flex;gap:16px;align-items:center;margin:24px 0 14px;color:#64748b}.list-caption>span{flex:1}.asset-name{margin-bottom:6px}.error{display:block;color:#dc2626}.attempt{margin-top:8px}.drawer-description{color:#64748b}@media(max-width:800px){.metrics{grid-template-columns:repeat(2,1fr)}.header p{max-width:260px}.list-caption{flex-wrap:wrap}}
 </style>

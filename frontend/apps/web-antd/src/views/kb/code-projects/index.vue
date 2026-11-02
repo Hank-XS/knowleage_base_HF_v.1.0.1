@@ -148,7 +148,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(timer); graph?.destroy(); 
     <Spin :spinning="loading">
       <Card>
         <template #title>{{ job?.project || '工程任务' }} <Tag>{{ job?.version }}</Tag></template>
-        <template #extra><Space><Button @click="refresh">刷新</Button><Button @click="router.push('/kb/ingest')">接入任务</Button><Button @click="router.push('/knowledge/upload?mode=project')">上传工程</Button></Space></template>
+        <template #extra><Space><Button @click="refresh">刷新</Button><Button @click="router.push('/knowledge/docs')">返回知识库</Button><Button @click="router.push('/knowledge/upload?mode=project')">上传工程</Button></Space></template>
         <p v-if="job">{{ job.filename }} · {{ job.library }} · <Tag>{{ statuses[job.status] }}</Tag></p>
         <Steps v-if="job" size="small" style="margin: 24px 0">
           <Step v-for="s in job.steps" :key="s.step" :title="steps[s.step] || s.step" :description="s.detail" :status="stepStatus(s.status)" />

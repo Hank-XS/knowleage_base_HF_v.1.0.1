@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import json
 import math
+import re
 
 from sqlalchemy import select
 
 from ..config import settings
-from ..db import SessionLocal, VerifiedAnswer
+from ..db import SessionLocal, VerifiedAnswer, IngestJob
 from ..llm import get_embedder
 from .fingerprint import route_by_similarity
 
@@ -27,8 +28,26 @@ def lookup(fingerprint: str, question: str, scene_code: str) -> dict:
         rows = db.execute(
             select(VerifiedAnswer).where(VerifiedAnswer.scene_code == scene_code)
         ).scalars().all()
+        from .catalog import current_project_jobs
+        current = current_project_jobs()
+        reusable = current - {job.id for job in db.scalars(select(IngestJob).where(IngestJob.id.in_(current)))
+                              if job.options_json.get('cleaned_chunks') or job.options_json.get('cleaned_graph')}
+        def current_sources(row):
+            jobs = {match for source in (row.sources_json or []) for value in
+                    (source.get('path', ''), source.get('obj', ''), source.get('ref', ''))
+                    for match in re.findall(r'(?:projects/|project/)([0-9a-f]{32})(?:/|$)', value or '')}
+            return jobs <= reusable
+        rows = [row for row in rows if row.status == 'verified' and current_sources(row)]
+        if not rows:
+            return {'route': 'miss', 'similarity': 0.0}
+        # A newly uploaded same-named file must not reuse an earlier unscoped answer.
+        from .hybrid import code_scope
+        from ..stores.graph import graph_store
+        _, matched = code_scope(question, graph_store, current, [])
+        if len({(d.library_key, d.project) for d in matched}) > 1:
+            return {'route': 'miss', 'similarity': 0.0}
         for row in rows:
-            if row.fingerprint == fingerprint and row.status == "verified":
+            if row.fingerprint == fingerprint:
                 return {"route": "exact", "answer": _payload(row), "similarity": 1.0}
         emb = get_embedder()
         qv = emb.embed([question])[0]

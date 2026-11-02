@@ -23,12 +23,13 @@ def _trim_evidence(items: list[dict], limit: int = 8) -> list[dict]:
     for e in items[:limit]:
         out.append({
             "channel": e.get("channel"),
+            "kind": e.get("kind", "chunk"),
             "ref": e.get("ref"),
             "label": e.get("label"),
             "loc": e.get("loc", ""),
             "path": e.get("obj") or e.get("path") or e.get("label") or "",
             "score": e.get("rank_score", e.get("score")),
-            "snippet": (e.get("text") or "")[:280],
+            "snippet": (e.get("text") or "")[:1400],
             "graph_id": e.get("graph_id"),
         })
     return out

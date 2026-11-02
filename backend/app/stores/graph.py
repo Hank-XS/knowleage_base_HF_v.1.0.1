@@ -27,7 +27,7 @@ class MemGraphStore:
 
     # ------------------------------------------------------------ persist
     def _load(self) -> None:
-        source = self._path if self._path.exists() else DATA_DIR / "graph_store.json"
+        source = self._path
         if source.exists():
             raw = json.loads(source.read_text("utf-8"))
             self._nodes = {n["id"]: n for n in raw["nodes"]}
@@ -69,6 +69,11 @@ class MemGraphStore:
         """Remove one ingestion snapshot, including incident edges."""
         with self._lock:
             ids = {nid for nid, n in self._nodes.items() if n['props'].get(key) == value}
+            self._nodes = {nid: n for nid, n in self._nodes.items() if nid not in ids}
+            self._edges = [e for e in self._edges if e['src'] not in ids and e['dst'] not in ids]
+
+    def delete_nodes(self, ids: set[str]) -> None:
+        with self._lock:
             self._nodes = {nid: n for nid, n in self._nodes.items() if nid not in ids}
             self._edges = [e for e in self._edges if e['src'] not in ids and e['dst'] not in ids]
 
@@ -197,6 +202,11 @@ class Neo4jGraphStore(MemGraphStore):
         with self._drv.session() as s:
             s.run('MATCH (n) WHERE n[$key] = $value DETACH DELETE n', key=key, value=value)
         super().delete_by_meta(key, value)
+
+    def delete_nodes(self, ids: set[str]) -> None:
+        with self._drv.session() as s:
+            s.run('MATCH (n) WHERE n.kb_id IN $ids DETACH DELETE n', ids=list(ids))
+        super().delete_nodes(ids)
 
     def upsert_edge(self, src: str, rel: str, dst: str, props: dict | None = None) -> None:
         super().upsert_edge(src, rel, dst, props)

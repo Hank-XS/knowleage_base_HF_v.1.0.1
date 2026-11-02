@@ -33,12 +33,18 @@ def extract_entities(question: str, history: list[dict] | None = None) -> list[s
     """词典匹配（图谱实体名 + 错误码 + 卡种）＋历史实体继承。"""
     ents: set[str] = set()
     q = question.lower()
+    from ..knowledge.catalog import current_project_jobs
+    current = current_project_jobs()
     for n in graph_store.dump()["nodes"]:
+        if n['props'].get('project_job') and n['props']['project_job'] not in current:
+            continue
         name = str(n["props"].get("name", ""))
         if not name or len(name) < 2:
             continue
         nl = name.lower()
-        if nl in q:
+        matched = (bool(re.search(r'(?<![a-z0-9_-])' + re.escape(nl) + r'(?![a-z0-9_-])', q))
+                   if re.fullmatch(r'[a-z0-9_.-]+', nl) else nl in q)
+        if matched:
             ents.add(n["props"].get("name"))
         elif n["label"] == "ErrorCode" and n["props"].get("code") and n["props"]["code"] in q:
             ents.add(name)
@@ -47,18 +53,18 @@ def extract_entities(question: str, history: list[dict] | None = None) -> list[s
         for n in graph_store.find("ErrorCode", code=m):
             ents.add(n["props"]["name"])
     # 历史继承（追问省略主语）
-    for h in (history or [])[-2:]:
+    for h in ((history or [])[-2:] if not ents else []):
         for e in h.get("entities", []):
             if any(k in q for k in ("呢", "区别", "它", "该", "上述", "还是")) or len(q) < 18:
                 ents.add(e)
-    return sorted(ents)[:8]
+    return sorted(ents, key=lambda name: (-len(name), name))[:8]
 
 
 def rewrite_query(question: str, entities: list[str], history: list[dict] | None = None) -> str:
     parts = [question.strip()]
     if entities:
         parts.append("（相关实体：" + "、".join(entities) + "）")
-    if history:
+    if history and any(word in question for word in ('它', '该', '上述', '这个', '继续', '那', '区别')):
         last_q = history[-1].get("question", "")
         if last_q:
             parts.append(f"（承接上文问题：{last_q[:60]}）")

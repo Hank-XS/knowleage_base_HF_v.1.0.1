@@ -28,9 +28,9 @@ python -m app.mcp_server   # stdio，供 MCP Host 拉起
     "hf-kb": {
       "command": "python",
       "args": ["-m", "app.mcp_server"],
-      "cwd": "D:/zcode/hsbc/kb-system/backend",
+      "cwd": "/absolute/path/to/knowledge-base/backend",
       "env": {
-        "KB_DATASET_ROOT": "D:/zcode/hsbc/kb-system/hf_data"
+        "KB_AUTO_IMPORT": "false"
       }
     }
   }

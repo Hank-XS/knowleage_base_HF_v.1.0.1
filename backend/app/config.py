@@ -56,6 +56,7 @@ class Settings(BaseSettings):
 
     # ---- 数据集清洗（默认指向仓库根 hf_data）----
     kb_dataset_root: str = ""           # 例 D:/zcode/hsbc/kb-system/hf_data
+    kb_auto_import: bool = False        # 默认空知识库；仅显式开启时自动导入本地素材
 
 
 settings = Settings()

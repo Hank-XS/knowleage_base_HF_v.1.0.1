@@ -1,153 +1,48 @@
 <script lang="ts" setup>
-import { onMounted, ref, watch } from 'vue';
-
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { Page } from '@vben/common-ui';
-
-import {
-  Card as ACard,
-  Empty as AEmpty,
-  RadioButton as ARadioButton,
-  RadioGroup as ARadioGroup,
-  Select as ASelect,
-  Spin as ASpin,
-  Tag as ATag,
-  message,
-} from 'ant-design-vue';
-
-import { getKmCodeMap, listKmCodeFiles, listKmLibraries } from '#/api/kb';
+import { Alert, Button, Card, Empty, RadioButton, RadioGroup, Select, Spin, Tag, message } from 'ant-design-vue';
+import { getKmDoc } from '#/api/kb';
+import { getFileMapping, getFileVersions, type FileVersion } from '#/api/knowledge-browse';
+import { useFileScope } from '../file-scope';
 
 defineOptions({ name: 'KnowledgeCodeMap' });
-
-const loading = ref(false);
-const direction = ref<'code2doc' | 'doc2code'>('code2doc');
-const kb = ref('');
-const fileKey = ref('');
-const version = ref('');
-const kbOptions = ref<{ label: string; value: string }[]>([]);
-const fileOptions = ref<{ label: string; value: string }[]>([]);
-const content = ref('');
-const label = ref('');
-const related = ref<Array<{ id: string; name: string; section: string }>>([]);
-const symbol = ref('');
-
-async function loadLibs() {
-  const libs = await listKmLibraries();
-  kbOptions.value = libs.map((l) => ({ label: l.title, value: l.key }));
-  // 代码多在 02_code_assets
-  const codeLib = libs.find((l) => l.key.includes('code'));
-  if (!kb.value) kb.value = codeLib?.key || libs[0]?.key || '';
-}
-
-async function loadFiles() {
-  const files = await listKmCodeFiles(kb.value);
-  fileOptions.value = files.map((f) => ({ label: f.label, value: f.key }));
-  if (!fileOptions.value.find((f) => f.value === fileKey.value)) {
-    fileKey.value = fileOptions.value[0]?.value || '';
-  }
-}
-
+const route = useRoute(); const router = useRouter(); const scope = useFileScope();
+const { library, project, tag, catalog, fileId, file, systems, projects, files } = scope;
+const direction = ref('code2doc'); const versions = ref<FileVersion[]>([]); const versionId = ref('');
+const data = ref<Awaited<ReturnType<typeof getFileMapping>>>(); const loading = ref(false); let sequence = 0;
+const extra = () => ({ asset_type: direction.value === 'code2doc' ? 'code' : 'document' });
 async function loadMap() {
-  if (!fileKey.value) {
-    content.value = '';
-    related.value = [];
-    return;
-  }
+  const id = ++sequence;
+  if (!fileId.value || !versionId.value) { data.value = undefined; loading.value = false; return; }
   loading.value = true;
-  try {
-    const data = await getKmCodeMap(fileKey.value);
-    content.value = data.file?.content || '';
-    label.value = data.file?.label || '';
-    version.value = data.file?.version || '';
-    related.value = data.relatedDocs || [];
-    symbol.value = data.symbol || '';
-  } catch (e: any) {
-    message.error(e?.message || '加载映射失败');
-  } finally {
-    loading.value = false;
-  }
+  try { const response = await getFileMapping(fileId.value, direction.value, versionId.value); if (id === sequence) data.value = response; }
+  catch (e: any) { message.error(e.response?.data?.message || e.message || '读取引用关系失败'); }
+  finally { if (id === sequence) loading.value = false; }
 }
-
-watch(kb, async () => {
-  await loadFiles();
-  await loadMap();
-});
-watch(fileKey, () => loadMap());
-
-onMounted(async () => {
-  await loadLibs();
-  await loadFiles();
-  await loadMap();
-});
+async function selectFile() {
+  sequence++; loading.value = false; data.value = undefined; versions.value = []; versionId.value = ''; const requested = fileId.value;
+  if (!requested) return;
+  try { const [doc, rows] = await Promise.all([getKmDoc(requested), getFileVersions(requested)]); if (requested !== fileId.value) return; file.value = doc; versions.value = rows; versionId.value = rows.find(v => v.current)?.id || rows.at(-1)?.id || ''; await loadMap(); }
+  catch (e: any) { message.error(e.message || '读取文件失败'); }
+}
+async function filterChanged(system = false) { sequence++; loading.value = false; data.value = undefined; versions.value = []; versionId.value = ''; await scope.reset(system, extra()); }
+function openFile(id: string, version: string) { router.push({ path: '/knowledge/chunk', query: { doc: id, version } }); }
+async function refresh() { await scope.initialize(route.query, extra()); if (fileId.value) await selectFile(); }
+onMounted(refresh); watch(() => route.fullPath, () => { if (route.path === '/knowledge/codemap') void refresh(); }); onBeforeUnmount(() => { sequence++; });
 </script>
-
 <template>
-  <Page content-class="km-page">
-    <div class="head">
-      <h2>代码文档映射</h2>
-      <p>展示代码片段与文档章节的双向映射关系</p>
-    </div>
-    <div class="controls">
-      <ARadioGroup v-model:value="direction" button-style="solid">
-        <ARadioButton value="code2doc">代码 → 文档</ARadioButton>
-        <ARadioButton value="doc2code">文档 → 代码</ARadioButton>
-      </ARadioGroup>
-      <div class="filters">
-        <ASelect v-model:value="kb" style="width: 200px" :options="kbOptions" />
-        <ASelect v-model:value="fileKey" style="width: 280px" :options="fileOptions" />
-        <ASelect
-          v-model:value="version"
-          style="width: 120px"
-          :options="version ? [{ label: version, value: version }] : []"
-        />
-      </div>
-    </div>
+  <Page>
+    <div class="heading"><div><small>内容管理 / 引用追踪</small><h1>代码文档映射</h1><p>按系统和工程查找代码与文档中的程序名、文件名引用。</p></div><Button @click="router.push('/knowledge/docs')">返回知识库</Button></div>
+    <Card><RadioGroup v-model:value="direction" button-style="solid" @change="filterChanged()"><RadioButton value="code2doc">代码 → 文档</RadioButton><RadioButton value="doc2code">文档 → 代码</RadioButton></RadioGroup>
+      <div class="filters"><label>所属系统<Select :value="library || undefined" @update:value="library = String($event || '')" :options="systems" allow-clear show-search option-filter-prop="label" placeholder="全部系统" @change="filterChanged(true)" /></label><label>工程<Select :value="project || undefined" @update:value="project = String($event || '')" :options="projects" allow-clear show-search option-filter-prop="label" placeholder="全部工程" @change="filterChanged()" /></label><label>主题标签<Select :value="tag || undefined" @update:value="tag = String($event || '')" :options="catalog.tags.map(t => ({label:t.value,value:t.value}))" allow-clear placeholder="全部主题" @change="filterChanged()" /></label><label class="file-select">{{ direction === 'code2doc' ? '代码文件' : '文档文件' }}<Select :value="fileId || undefined" @update:value="fileId = String($event || '')" :options="files" :loading="scope.loading.value" show-search :filter-option="false" :placeholder="direction === 'code2doc' ? '搜索代码文件或 Copybook' : '搜索文档名称'" @search="scope.searchFiles($event, extra())" @popup-scroll="scope.loadMore($event, extra())" @change="selectFile" /></label><label>版本<Select :value="versionId || undefined" @update:value="versionId = String($event || '')" :options="versions.map(v => ({ label: v.version, value: v.id }))" :disabled="!versions.length" placeholder="选择版本" @change="loadMap" /></label></div>
 
-    <ASpin :spinning="loading">
-      <div class="panes">
-        <ACard class="pane">
-          <template #title>
-            <span>💻 {{ label || '代码' }} {{ symbol ? `· ${symbol}` : '' }}</span>
-          </template>
-          <pre class="code">{{ content }}</pre>
-        </ACard>
-        <ACard class="pane">
-          <template #title>
-            <div class="pane-title">
-              <span>关联文档</span>
-              <ATag color="blue">{{ related.length }}</ATag>
-            </div>
-          </template>
-          <div v-if="related.length" class="rel-list">
-            <div v-for="d in related" :key="d.id" class="rel-item">
-              <div class="rel-name">📄 {{ d.name }}</div>
-              <div class="rel-sec">{{ d.section }}</div>
-              <ATag :color="direction === 'code2doc' ? 'processing' : 'purple'">
-                {{ direction === 'code2doc' ? '代码引用' : '文档回溯' }}
-              </ATag>
-            </div>
-          </div>
-          <AEmpty v-else description="未找到映射：该文件可能未被任何文档引用，或名称不匹配" />
-        </ACard>
-      </div>
-    </ASpin>
+    </Card>
+    <Alert class="notice" type="info" show-icon message="引用根据文档中的程序名和文件名匹配。代码只关联同系统下的本工程文档和系统通用资料；这类引用仍需业务确认。" />
+    <Spin :spinning="loading"><div v-if="data" class="panes"><Card :title="data.file.label"><template #extra><Tag>{{ data.file.version }}</Tag><Button type="link" @click="openFile(data.file.key, data.file.version)">查看原文与切片</Button></template><pre class="content">{{ data.file.content }}</pre></Card><Card :title="`${direction === 'code2doc' ? '关联文档' : '关联代码'} · ${data.relatedDocs.length}`"><div v-for="item in data.relatedDocs" :key="item.id" class="related"><strong>{{ item.name }}</strong><p>{{ item.section }}</p><Tag>{{ item.project || '系统通用' }}</Tag><Tag>{{ item.version }}</Tag><Button type="link" @click="openFile(item.id, item.version)">查看原文与切片</Button><Button v-if="direction === 'doc2code'" type="link" @click="router.push({ path: '/kb/graph', query: { doc: item.id } })">代码关系图</Button></div><Empty v-if="!data.relatedDocs.length" :description="direction === 'code2doc' ? '当前范围没有文档引用此程序或文件，可上传关联说明文档后再查看' : '文档中未匹配到当前工程的程序名或文件名'" /></Card></div><Card v-else class="notice"><Empty :description="`先选择系统、工程，再选择${direction === 'code2doc' ? '代码文件' : '文档'}`" /></Card></Spin>
   </Page>
 </template>
-
 <style scoped>
-.head h2 { margin: 0; font-size: 20px; }
-.head p { margin: 4px 0 14px; color: #8c8c8c; font-size: 13px; }
-.controls { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
-.filters { display: flex; flex-wrap: wrap; gap: 10px; }
-.panes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; min-height: 520px; }
-.pane { border-radius: 10px; min-height: 520px; }
-.pane-title { display: flex; justify-content: space-between; width: 100%; align-items: center; }
-.code {
-  margin: 0; background: #0f172a; color: #e2e8f0; padding: 14px; border-radius: 8px;
-  font-size: 12px; line-height: 1.55; max-height: 480px; overflow: auto; white-space: pre;
-}
-.rel-list { display: flex; flex-direction: column; gap: 10px; }
-.rel-item { border: 1px solid #f0f0f0; border-radius: 8px; padding: 12px; background: #fafafa; }
-.rel-name { font-weight: 600; margin-bottom: 4px; }
-.rel-sec { color: #8c8c8c; font-size: 13px; margin-bottom: 8px; }
-@media (max-width: 960px) { .panes { grid-template-columns: 1fr; } }
+.heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}.heading h1{font-size:26px;margin:6px 0}.heading p,small{color:hsl(var(--muted-foreground))}.filters{display:flex;gap:16px;flex-wrap:wrap;margin-top:20px}.filters label{display:flex;flex:1;flex-direction:column;gap:8px;min-width:150px;font-size:13px}.filters .file-select{flex:2;min-width:280px}.pages{display:flex;gap:10px;justify-content:flex-end;align-items:center;margin-top:14px;color:hsl(var(--muted-foreground))}.notice{margin-top:20px}.panes{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;margin-top:20px}.content{max-height:65vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8;background:hsl(var(--muted));padding:16px;border-radius:8px;font-size:12px}.related{padding:16px;border:1px solid hsl(var(--border));border-radius:8px;margin-bottom:12px}.related strong,.related p{overflow-wrap:anywhere}.related p{color:hsl(var(--muted-foreground));margin:10px 0}@media(max-width:1000px){.panes{grid-template-columns:1fr}}
 </style>

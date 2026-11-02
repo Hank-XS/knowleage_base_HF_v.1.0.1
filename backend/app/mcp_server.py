@@ -19,6 +19,7 @@ if str(_BACKEND) not in sys.path:
 
 
 def _bootstrap() -> None:
+    from app.config import settings
     from app.db import init_db
     from app.ingest.tagger import ensure_vocab
     from app.seed import seed_knowledge, seed_users
@@ -26,7 +27,8 @@ def _bootstrap() -> None:
     init_db()
     seed_users()
     ensure_vocab()
-    seed_knowledge(force=False)
+    if settings.kb_auto_import:
+        seed_knowledge(force=False)
 
 
 def build_mcp():

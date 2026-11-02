@@ -46,7 +46,7 @@ export interface ProjectGraph {
   truncated: boolean;
   total: number;
 }
-export const uploadCodeProject = (data: FormData) => requestClient.post<ProjectJob>('/code-projects', data);
+export const uploadCodeProject = (data: FormData, onUploadProgress?: (event: { loaded: number; total?: number }) => void) => requestClient.post<ProjectJob>('/code-projects', data, { onUploadProgress });
 export const listCodeProjects = () => requestClient.get<ProjectJob[]>('/code-projects');
 export const getCodeProject = (id: string) => requestClient.get<ProjectJob>(`/code-projects/${id}`);
 export const retryCodeProject = (id: string) => requestClient.post<ProjectJob>(`/code-projects/${id}/retry`);
