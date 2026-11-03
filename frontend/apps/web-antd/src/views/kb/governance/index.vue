@@ -267,7 +267,7 @@ async function submit() {
     const items = (current.value.items ?? [])
       .filter((it) => decisions.value[it.item_id])
       .map((it) => ({
-        action: decisions.value[it.item_id],
+        action: decisions.value[it.item_id]!,
         item_id: it.item_id,
         reason:
           decisions.value[it.item_id] === 'reject' ? '治理工作台人工驳回' : '',
@@ -380,7 +380,7 @@ function fmtTime(t: string) {
                   <ATag
                     :color="statusColor(record.status)"
                     style="cursor: pointer"
-                    @click.stop="openTask(record)"
+                    @click.stop="openTask(record as TaggingTask)"
                   >
                     {{ record.status === 'done' ? '已完成' : '待校对' }}
                   </ATag>
@@ -392,7 +392,7 @@ function fmtTime(t: string) {
                   <AButton
                     size="small"
                     type="link"
-                    @click.stop="openTask(record)"
+                    @click.stop="openTask(record as TaggingTask)"
                   >
                     校对
                   </AButton>

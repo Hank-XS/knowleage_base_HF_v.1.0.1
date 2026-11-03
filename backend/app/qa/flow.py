@@ -14,6 +14,7 @@ from ..config import settings
 from ..db import QaMessage, SessionLocal
 from ..knowledge import cache, retrieval
 from ..knowledge.fingerprint import compute_fingerprint, normalize_question
+from ..knowledge.scope import question_scoped, active_scope
 from ..llm import get_llm
 from ..tools.handlers import TOOL_SPECS, invoke_tool as tools_invoke
 from . import analyzer, prompts
@@ -78,7 +79,7 @@ registry.register(ToolSpec(
     "query_cache", "缓存三级分流判定（exact / similar / miss）",
     {"type": "object", "properties": {"fingerprint": {"type": "string"}, "query": {"type": "string"}},
      "required": ["fingerprint"]},
-    lambda p: cache.lookup(p.get("fingerprint", ""), p.get("query", ""), "ATM")))
+    lambda p: cache.lookup(p.get("fingerprint", ""), p.get("query", ""), p.get('scene_code', 'ATM'))))
 
 registry.register(ToolSpec(
     "save_answer", "已验证答案入库（长时记忆沉淀）",
@@ -103,6 +104,7 @@ class SessionContext:
     user: str = ""
     question: str = ""
     history: list[dict] = field(default_factory=list)
+    role: str = ''
 
 
 @dataclass
@@ -123,10 +125,16 @@ class AnswerContext:
 class SingleFlowOrchestrator:
     """固定序列编排：问题分析 → 指纹/分流 → 多路检索 → 重排 → LLM 合成 → 溯源输出。"""
 
+    @question_scoped
     def run(self, ctx: SessionContext) -> AnswerContext:
         t0 = time.time()
         ac = AnswerContext()
         trace = ac.reasoning_trace
+        timings = dict(tool='qa_timings', orchestrator='flow')
+        if active_scope():
+            active_scope().diagnostics.append(timings)
+        if active_scope() and active_scope().plan:
+            trace.append({'step':0, 'tool':'query_router', 'result':active_scope().plan.mode})
 
         # 1) 问题分析
         intent = analyzer.classify_intent(ctx.question)
@@ -137,9 +145,12 @@ class SingleFlowOrchestrator:
                       "result": f"intent={intent}, entities={entities}"})
 
         # 2) 指纹 + 三级分流
-        norm = normalize_question(ctx.question, ctx.scene_code, entities)
+        cache_question = active_scope().question if active_scope() else ctx.question
+        norm = normalize_question(cache_question, ctx.scene_code, entities)
         fp = compute_fingerprint(norm)
-        verdict = registry.invoke("query_cache", {"fingerprint": fp, "query": rewritten})
+        phase = time.monotonic()
+        verdict = registry.invoke("query_cache", {"fingerprint": fp, "query": cache_question, 'scene_code': ctx.scene_code})
+        timings['cache_ms'] = round((time.monotonic() - phase) * 1000)
         trace.append({"step": 2, "tool": "query_cache",
                       "result": f"{verdict['route']}({verdict.get('similarity', 0)})"})
         ac.hit_type, ac.similarity = verdict["route"], verdict.get("similarity", 0.0)
@@ -159,28 +170,44 @@ class SingleFlowOrchestrator:
             reference = cache.compress_reference(verdict["answer"])
 
         # 3) 多路检索（并行通道，串行调用演示）
+        phase = time.monotonic()
         evidences = retrieval.retrieve(rewritten, intent, entities)
+        timings['retrieval_ms'] = round((time.monotonic() - phase) * 1000)
         trace.append({"step": 3, "tool": "search_graph+doc+code",
                       "result": f"{len(evidences)} 条证据（含重排）"})
+
+        # No model call can create evidence or resolve an ambiguous uploaded filename.
+        if not evidences or any(e.get('kind') == 'ambiguous_scope' for e in evidences):
+            from .answers import finish_answer
+            from ..knowledge.evidence import EvidenceRegistry
+            ac.answer, ac.sources = finish_answer({}, EvidenceRegistry(evidences).sources(include_text=True))
+            ac.elapsed_ms = int((time.time() - t0) * 1000)
+            self._persist(ctx, ac, fingerprint=fp, norm=norm)
+            return ac
 
         # 4) LLM 整体分析 + 答案生成
         llm = get_llm()
         is_mock = type(llm).__name__ != "ApiLLM"
-        ev_lines = [f"{e.get('ref', '')}｜{e.get('label', '')} {e.get('loc', '')}｜{(e.get('text', '') or '')[:1200]}"
+        ev_lines = [f"{e.get('ref', '')}｜{e.get('label', '')} {e.get('loc', '')}｜{e.get('text', '') or ''}"
                     for e in evidences]
         history_lines = [f"Q: {h.get('question', '')} A: {str(h.get('answer', {}).get('what', ''))[:80]}"
                          for h in ctx.history]
         messages = prompts.build_synthesis_messages(
             ctx.scene_code, ctx.question, ev_lines, reference, history_lines,
             mock=is_mock, evidence=evidences)
+        phase = time.monotonic()
         raw = llm.chat(messages, temperature=0.2, json_mode=not is_mock)
+        timings['generation_ms'] = round((time.monotonic() - phase) * 1000)
         answer = self._parse_answer(raw)
         trace.append({"step": 4, "tool": "llm_synthesis",
                       "result": f"{llm.name} 生成答案（confidence={answer.get('confidence')}）"})
 
         # 5) 溯源标注
-        ac.answer = answer
-        ac.sources = self._sources(evidences)
+        from .answers import repair_answer
+        from ..knowledge.evidence import EvidenceRegistry
+        phase = time.monotonic()
+        ac.answer, ac.sources = repair_answer(llm, answer, EvidenceRegistry(evidences).sources(include_text=True), ctx.question)
+        timings['validation_ms'] = round((time.monotonic() - phase) * 1000)
         ac.review_status = "pending_review" if ctx.question else "pending_review"
         ac.elapsed_ms = int((time.time() - t0) * 1000)
         self._persist(ctx, ac, fingerprint=fp, norm=norm)
@@ -221,11 +248,14 @@ class SingleFlowOrchestrator:
                 answer_id="", hit_type=ac.hit_type,
                 payload_json={
                     "fingerprint": fingerprint, "question_norm": norm,
+                    "retrieval_mode": active_scope().plan.mode if active_scope() and active_scope().plan else 'business',
+                    "retrieval_diagnostics": active_scope().diagnostics if active_scope() else [],
                     "answer": ac.answer, "sources": ac.sources,
                     "reasoning_trace": ac.reasoning_trace,
                     "review_status": ac.review_status,
                     "entities": ac.entities, "intent": ac.intent,
                     "similarity": ac.similarity,
+                    "orchestrator": "flow",
                 })
             db.add(msg)
             db.commit()

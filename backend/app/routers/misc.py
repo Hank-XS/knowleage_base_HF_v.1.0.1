@@ -39,11 +39,11 @@ def kb_stats(request: Request, user: User = Depends(current_user)):
 @router.get("/graph/struct")
 def graph_struct(request: Request, library: str = '', project: str = '', version: str = '', tag: str = '',
                  history: bool = False, detail: bool = False, doc_id: str = '', neighbors: bool = True, view: str = 'structure', cross_system: bool = False,
-                 user: User = Depends(current_user)):
+                 offset: int = 0, limit: int = 1000, user: User = Depends(current_user)):
     from ..knowledge.graph_view import build_graph
     try:
         return ok(build_graph(graph_store, library=library, project=project, version=version, tag=tag,
-                              history=history, detail=detail, doc_id=doc_id, neighbors=neighbors, view=view, cross_system=cross_system), request)
+                              history=history, detail=detail, doc_id=doc_id, neighbors=neighbors, view=view, cross_system=cross_system, offset=offset, limit=limit), request)
     except ValueError as exc:
         raise KbError('40001', str(exc)) from exc
 

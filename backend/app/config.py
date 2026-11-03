@@ -10,7 +10,10 @@ LLM 双模式：
 """
 import os
 from pathlib import Path
+from urllib.parse import urlparse
+from typing import Literal
 
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -19,7 +22,7 @@ SEED_DIR = BASE_DIR / "data" / "seed"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=BASE_DIR / ".env", env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = "某行核心系统迁移知识库"
     api_prefix: str = "/api/v1"
@@ -38,13 +41,28 @@ class Settings(BaseSettings):
 
     # ---- LLM（OpenAI 兼容） ----
     kb_llm_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
-    kb_llm_api_key: str = ""
+    kb_llm_api_key: str = Field(default="", repr=False)
+    deepseek_api_key: str = Field(default="", repr=False, exclude=True)
     kb_llm_model: str = "glm-4.6"
     kb_llm_timeout: float = 120.0
+    kb_llm_max_tokens: int = Field(default=4096, ge=1)
+    kb_llm_thinking: str = "disabled"  # DeepSeek: enabled / disabled
     kb_emb_base_url: str = ""               # 缺省沿用 kb_llm_base_url
     kb_emb_api_key: str = ""                # 缺省沿用 kb_llm_api_key
     kb_emb_model: str = "embedding-3"
+    kb_emb_local_path: str = ""
+    kb_rerank_local_path: str = ""
+    kb_model_device: str = "cpu"
+    kb_model_cpu_threads: int = Field(default=4, ge=1, le=128)
+    kb_emb_query_instruction: str = "Given a question or code snippet, retrieve relevant source code and documentation that answer the question."
+    kb_retrieval_batch_size: int = Field(default=8, ge=1, le=128)
     kb_rerank_url: str = ""                 # TEI /rerank 端点，可选
+    kb_qa_strategy: Literal['auto', 'flow', 'agent'] = 'auto'
+    kb_rerank_enabled: bool = False  # Demo defaults to hybrid fusion without model reranking.
+    kb_rerank_candidates: int = Field(default=12, ge=1, le=60)
+    kb_rerank_max_tokens: int = Field(default=1024, ge=256, le=8192)
+    kb_rerank_batch_size: int = Field(default=4, ge=1, le=128)
+    kb_rerank_cache_size: int = Field(default=2048, ge=0, le=100000)
 
     # ---- 长时记忆阈值（设计初值，可配置） ----
     threshold_exact: float = 0.95
@@ -53,10 +71,22 @@ class Settings(BaseSettings):
     # ---- 检索预算 ----
     retrieve_top_k: int = 5
     context_budget_tokens: int = 6000
+    kb_child_tokens: int = Field(default=384, ge=64, le=2048)
+    kb_rerank_min_score: float = Field(default=0.01, ge=0, le=1)
 
     # ---- 数据集清洗（默认指向仓库根 hf_data）----
     kb_dataset_root: str = ""           # 例 D:/zcode/hsbc/kb-system/hf_data
     kb_auto_import: bool = False        # 默认空知识库；仅显式开启时自动导入本地素材
+
+    @model_validator(mode="after")
+    def deepseek_credentials(self):
+        # Never send a DeepSeek environment key to another provider.
+        if urlparse(self.kb_llm_base_url).hostname == "api.deepseek.com":
+            if not self.kb_llm_api_key:
+                self.kb_llm_api_key = self.deepseek_api_key
+        if self.kb_llm_thinking not in {"enabled", "disabled"}:
+            raise ValueError("KB_LLM_THINKING must be enabled or disabled")
+        return self
 
 
 settings = Settings()

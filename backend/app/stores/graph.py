@@ -23,7 +23,12 @@ class MemGraphStore:
         self._lock = threading.RLock()
         self._nodes: dict[str, dict] = {}
         self._edges: list[dict] = []
+        self._revision = 0
         self._load()
+
+    @property
+    def revision(self):
+        return self._revision
 
     # ------------------------------------------------------------ persist
     def _load(self) -> None:
@@ -44,6 +49,7 @@ class MemGraphStore:
     def upsert_node(self, node_id: str, label: str, props: dict | None = None) -> str:
         with self._lock:
             node = self._nodes.get(node_id)
+            self._revision += 1
             if node is None:
                 node = {"id": node_id, "label": label, "props": {}}
                 self._nodes[node_id] = node
@@ -53,6 +59,7 @@ class MemGraphStore:
 
     def upsert_edge(self, src: str, rel: str, dst: str, props: dict | None = None) -> None:
         with self._lock:
+            self._revision += 1
             for e in self._edges:
                 if e["src"] == src and e["rel"] == rel and e["dst"] == dst:
                     e["props"].update(props or {})
@@ -61,6 +68,7 @@ class MemGraphStore:
 
     def remove_edges(self, src: str, rel: str | None = None, dst: str | None = None) -> None:
         with self._lock:
+            self._revision += 1
             self._edges = [e for e in self._edges
                            if not (e["src"] == src and (rel is None or e["rel"] == rel)
                                    and (dst is None or e["dst"] == dst))]
@@ -68,12 +76,14 @@ class MemGraphStore:
     def delete_by_meta(self, key: str, value: str) -> None:
         """Remove one ingestion snapshot, including incident edges."""
         with self._lock:
+            self._revision += 1
             ids = {nid for nid, n in self._nodes.items() if n['props'].get(key) == value}
             self._nodes = {nid: n for nid, n in self._nodes.items() if nid not in ids}
             self._edges = [e for e in self._edges if e['src'] not in ids and e['dst'] not in ids]
 
     def delete_nodes(self, ids: set[str]) -> None:
         with self._lock:
+            self._revision += 1
             self._nodes = {nid: n for nid, n in self._nodes.items() if nid not in ids}
             self._edges = [e for e in self._edges if e['src'] not in ids and e['dst'] not in ids]
 

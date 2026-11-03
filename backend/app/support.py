@@ -7,11 +7,20 @@ DISCLAIMER = "生成代码仅作开发骨架参考，不直接在主机环境运
 
 
 def analyze_impact(target: str, change_summary: str = "", depth: int = 3) -> dict:
-    nodes = graph_store.find_by_name(target)
+    from .knowledge.relations import relation_graph
+    from .knowledge.catalog import current_project_jobs
+    from .knowledge.scope import active_scope
+    graph = relation_graph(graph_store)
+    current, scope = current_project_jobs(), active_scope()
+    nodes = [n for n in graph.find_by_name(target) if not n['props'].get('project_job') or n['props']['project_job'] in current]
+    if scope and scope.paths is not None:
+        nodes = [n for n in nodes if n['props'].get('source_path') in scope.paths]
     if not nodes:
         return {"found": False, "message": f"未在图谱中找到对象：{target}"}
+    if len(nodes) > 1:
+        return {'found': False, 'message': '存在同名对象，请补充系统、工程或实体路径'}
     node = nodes[0]
-    sub = graph_store.impact(node["id"], depth=depth)
+    sub = graph.impact(node["id"], depth=depth)
     affected_interfaces = sub["by_label"].get("Interface", 0)
     affected_subsystems = sub["by_label"].get("SubSystem", 0) + sub["by_label"].get("System", 0)
     coupling = sub["coupling_score"]

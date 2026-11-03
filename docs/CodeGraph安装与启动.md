@@ -1,14 +1,14 @@
 # 安装与启动
 
-本分支提供文档知识库、COBOL 工程分析、结构切片、图谱、版本对比、引用映射和问答。无需 Docker 或模型密钥即可运行，首次启动为空知识库。
+项目提供文档知识库、COBOL 工程分析、结构切片、图谱、版本对比、引用映射和问答。无需 Docker 或模型密钥即可运行，全新安装首次启动为空知识库。
 
 ## 环境与源码
 
-需要 Git、Python 3.11+、Node.js 25.8.2、pnpm 11.16.0。Windows x64 已验证；下方提供 macOS/Linux 对应命令。
+需要 Git、Python 3.11+、Node.js 25.8.2、pnpm 11.16.0。下方分别提供 Windows 和 macOS/Linux 命令。
 
 ```sh
-git clone --branch feat/knowledge-platform-source-20261102 --single-branch https://github.com/Hank-XS/knowleage_base_HF_v.1.0.1.git
-cd knowleage_base_HF_v.1.0.1
+git clone <仓库地址> knowledge-base
+cd knowledge-base
 npm install -g pnpm@11.16.0
 ```
 
@@ -63,9 +63,76 @@ pnpm build:antd
 
 产物在 `frontend/apps/web-antd/dist`。生产配置使用 `/api`，部署时将 `/api/*` 转发到后端 `/api/v1/*`，避免重复拼接 `v1`。源码仓库不包含构建产物、依赖目录和实际服务配置。
 
+## 模型与 Demo 配置
+
+后端从 `backend/.env` 加载配置，进程环境变量优先。生成模型的接口、密钥与模型名配置见根目录 [README](../README.md)，完整字段见 [配置模板](../backend/.env.example)。
+
+```ini
+KB_QA_STRATEGY=auto
+KB_RERANK_ENABLED=false
+KB_LLM_THINKING=disabled
+KB_MODEL_DEVICE=cpu
+KB_MODEL_CPU_THREADS=4
+```
+
+聊天框使用单一输入。`auto` 让普通事实与定位问题走固定检索后生成，复杂比较、影响或调用链问题使用 Agent。前端发送 `mode=auto`；显式 `mode=agent` 或 `mode=flow` 优先于自动策略。
+
+Demo 默认关闭模型重排，保留原文匹配、BM25 与语义向量融合，不加载重排模型。前后端更新后应重新构建前端并重启后端。只切换重排开关无需重建向量索引。
+
+### 本地语义向量
+
+使用本地模型时，在后端虚拟环境安装额外依赖：
+
+```sh
+python -m pip install -r requirements-retrieval.txt
+```
+
+将完整的模型目录放到部署机器，并在 `.env` 配置该机器上的绝对路径。例如：
+
+```ini
+KB_EMB_LOCAL_PATH=/opt/kb/models/Qwen3-Embedding-0.6B
+KB_EMB_MODEL=Qwen3-Embedding-0.6B
+```
+
+Windows 路径可使用 `D:/models/Qwen3-Embedding-0.6B`。离线部署需一并准备模型配置、tokenizer、权重及 revision 文件；问答请求不会自动下载模型。联网准备机器可执行 `python scripts/download_retrieval_models.py` 下载 Embedding 与可选重排模型。
+
+本地路径配置后优先使用本地模型。使用远端向量服务时清空 `KB_EMB_LOCAL_PATH`，并配置 `KB_EMB_BASE_URL`、`KB_EMB_API_KEY`、`KB_EMB_MODEL`；不要把只有聊天接口的服务作为向量服务。
+
+### 索引构建、激活与回滚
+
+以下命令在 `backend` 目录执行，`python` 使用已安装依赖的后端虚拟环境。已有非语义索引或更换 Embedding 模型、维度、指令模板后，需要重建；日常上传使用当前配置生成索引。
+
+```sh
+# 离线构建暂存代，不覆盖当前索引
+python scripts/rebuild_retrieval.py --stage-only
+
+# 停止后端写入后，使用构建结果中的 generation_id 激活，再重启后端
+python scripts/rebuild_retrieval.py --activate <generation_id>
+
+# 需要恢复时，停止后端后回滚到该次构建前的索引
+python scripts/rebuild_retrieval.py --rollback <generation_id>
+```
+
+暂存代、原文摘要与回滚文件保存在 `backend/data/runtime/index-generations/`。原文、切片或权限已变化时，旧代激活与回滚会被拒绝，应重新构建，避免恢复已清理或已撤权内容。本地内嵌存储保持单进程，不支持多个后端进程同时写入。
+
+### 可选模型重排
+
+仅在需要对比排序质量时启用，并配置本地重排模型路径或远端服务：
+
+```ini
+KB_RERANK_ENABLED=true
+KB_RERANK_LOCAL_PATH=/opt/kb/models/Qwen3-Reranker-0.6B
+KB_RERANK_CANDIDATES=12
+KB_RERANK_MAX_TOKENS=1024
+KB_RERANK_BATCH_SIZE=4
+KB_RERANK_CACHE_SIZE=2048
+```
+
+远端服务使用 `KB_RERANK_URL` 并清空本地重排路径。关闭开关时，即使保留路径也不会加载模型。输入预算会影响候选排序；耗时与相关性应使用实际业务问题评估。
+
 ## 使用与检查
 
-上传自己的 DOCX、文本型 PDF、Markdown 或完整 COBOL 工程 ZIP，按系统、工程、版本和主题标签归档。具体操作见 [知识库分类与文档接入](知识库分类与文档接入.md)，检索行为见 [通用检索方案](通用检索方案.md)。
+上传自己的 DOCX、文本型 PDF、Markdown 或完整 COBOL 工程 ZIP，按系统、工程、版本和主题标签归档。具体操作和问答行为见 [知识库分类与文档接入](知识库分类与文档接入.md)。
 
 回归测试会在临时目录生成合成素材：
 

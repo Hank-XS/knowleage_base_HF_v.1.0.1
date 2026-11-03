@@ -9,7 +9,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from urllib.parse import urlparse
 from typing import Protocol
+from threading import RLock
 
 import httpx
 
@@ -40,17 +42,29 @@ class ApiLLM:
     def __init__(self) -> None:
         self.name = f"api:{settings.kb_llm_model}"
 
-    def chat(self, messages: list[dict], *, temperature: float = 0.2, json_mode: bool = False) -> str:
-        body: dict = {"model": settings.kb_llm_model, "messages": messages, "temperature": temperature}
-        if json_mode:
-            body["response_format"] = {"type": "json_object"}
+    def _complete(self, body: dict) -> dict:
+        body["max_tokens"] = settings.kb_llm_max_tokens
+        if urlparse(settings.kb_llm_base_url).hostname == "api.deepseek.com":
+            body["thinking"] = {"type": settings.kb_llm_thinking}
         resp = httpx.post(
             f"{settings.kb_llm_base_url.rstrip('/')}/chat/completions",
             headers={"Authorization": f"Bearer {settings.kb_llm_api_key}"},
             json=body, timeout=settings.kb_llm_timeout,
         )
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        choice = resp.json()["choices"][0]
+        if choice.get("finish_reason") == "length":
+            raise ValueError("模型输出被截断，请提高 KB_LLM_MAX_TOKENS 后重试")
+        message = choice["message"]
+        if not (message.get("content") or "").strip() and not message.get("tool_calls"):
+            raise ValueError("模型返回空答案，请重试或调整提示词")
+        return message
+
+    def chat(self, messages: list[dict], *, temperature: float = 0.2, json_mode: bool = False) -> str:
+        body: dict = {"model": settings.kb_llm_model, "messages": messages, "temperature": temperature}
+        if json_mode:
+            body["response_format"] = {"type": "json_object"}
+        return self._complete(body)["content"]
 
     def chat_tools(
         self,
@@ -68,18 +82,15 @@ class ApiLLM:
             "tools": tools,
             "tool_choice": tool_choice,
         }
-        resp = httpx.post(
-            f"{settings.kb_llm_base_url.rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {settings.kb_llm_api_key}"},
-            json=body, timeout=settings.kb_llm_timeout,
-        )
-        resp.raise_for_status()
-        msg = resp.json()["choices"][0]["message"]
-        return {
+        msg = self._complete(body)
+        result = {
             "role": msg.get("role", "assistant"),
             "content": msg.get("content") or "",
             "tool_calls": msg.get("tool_calls") or [],
         }
+        if "reasoning_content" in msg:
+            result["reasoning_content"] = msg["reasoning_content"]
+        return result
 
 
 class ApiEmbedder:
@@ -87,7 +98,8 @@ class ApiEmbedder:
         base = settings.kb_emb_base_url or settings.kb_llm_base_url
         key = settings.kb_emb_api_key or settings.kb_llm_api_key
         self._base, self._key = base, key
-        self.name = f"api:{settings.kb_emb_model}"
+        contract = hashlib.sha256(f'{base}|{settings.kb_emb_model}|{settings.kb_emb_query_instruction}|v2'.encode()).hexdigest()[:12]
+        self.name = f"api:{settings.kb_emb_model}:{contract}"
         self.dim = 0
 
     def embed(self, texts: list[str]) -> list[list[float]]:
@@ -102,9 +114,16 @@ class ApiEmbedder:
             )
             resp.raise_for_status()
             data = resp.json()["data"]
+            indices = [d.get('index') for d in data]
+            if any(not isinstance(i, int) for i in indices) or sorted(indices) != list(range(len(batch))):
+                raise ValueError('嵌入服务返回的index缺失、重复或越界')
+            data = sorted(data, key=lambda d: d['index'])
             out.extend(d["embedding"] for d in data)
         self.dim = len(out[0]) if out else 0
         return out
+
+    def embed_queries(self, texts):
+        return self.embed([f'Instruct: {settings.kb_emb_query_instruction}\nQuery: {t}' for t in texts])
 
 
 class ApiReranker:
@@ -119,7 +138,14 @@ class ApiReranker:
             json={"query": query, "texts": documents}, timeout=30.0,
         )
         resp.raise_for_status()
-        return [float(x) for x in resp.json()]
+        data = resp.json()
+        if isinstance(data, dict):
+            data = data.get('results', [])
+        if data and isinstance(data[0], dict):
+            if sorted(x['index'] for x in data) != list(range(len(documents))):
+                raise ValueError('重排服务返回的index不完整')
+            data = [x['score'] if 'score' in x else x['relevance_score'] for x in sorted(data, key=lambda d: d['index'])]
+        return [float(x) for x in data]
 
 
 # ---------------------------------------------------------------- fallbacks
@@ -196,12 +222,15 @@ class HashEmbedder:
 _llm: ChatLLM | None = None
 _emb: Embedder | None = None
 _rr: Reranker | None = None
+_model_init_lock = RLock()
 
 
 def get_llm() -> ChatLLM:
     global _llm
     if _llm is None:
-        _llm = ApiLLM() if settings.kb_llm_api_key else MockLLM()
+        with _model_init_lock:
+            if _llm is None:
+                _llm = ApiLLM() if settings.kb_llm_api_key else MockLLM()
     return _llm
 
 
@@ -210,17 +239,30 @@ def get_embedder() -> Embedder:
     DeepSeek 等无 embedding 接口的 provider 不能只凭 LLM Key 启用。"""
     global _emb
     if _emb is None:
-        if settings.kb_emb_base_url:
-            _emb = ApiEmbedder()
-        else:
-            _emb = HashEmbedder()
+        with _model_init_lock:
+            if _emb is None:
+                if settings.kb_emb_local_path:
+                    from .local import LocalEmbedder
+                    _emb = LocalEmbedder()
+                elif settings.kb_emb_base_url:
+                    _emb = ApiEmbedder()
+                else:
+                    _emb = HashEmbedder()
     return _emb
 
 
 def get_reranker() -> Reranker | None:
     global _rr
-    if _rr is None and settings.kb_rerank_url:
-        _rr = ApiReranker()
+    if not settings.kb_rerank_enabled:
+        return None
+    if _rr is None:
+        with _model_init_lock:
+            if _rr is None:
+                if settings.kb_rerank_local_path:
+                    from .local import LocalReranker
+                    _rr = LocalReranker()
+                elif settings.kb_rerank_url:
+                    _rr = ApiReranker()
     return _rr
 
 
@@ -229,8 +271,9 @@ def llm_status() -> dict:
     return {
         "llm": {"mode": "api" if isinstance(llm, ApiLLM) else "mock", "name": llm.name,
                 "model": settings.kb_llm_model if isinstance(llm, ApiLLM) else None},
-        "embedding": {"mode": "api" if isinstance(emb, ApiEmbedder) else "hash", "name": emb.name,
-                      "model": settings.kb_emb_model if isinstance(emb, ApiEmbedder) else None},
-        "rerank": {"mode": "api" if rr else "heuristic", "name": rr.name if rr else "heuristic:keyword"},
+        "embedding": {"mode": "hash" if isinstance(emb, HashEmbedder) else "api" if isinstance(emb, ApiEmbedder) else "local", "name": emb.name,
+                      "model": None if isinstance(emb, HashEmbedder) else settings.kb_emb_model},
+        "rerank": {"mode": "api" if isinstance(rr, ApiReranker) else "local" if rr else "disabled",
+                   "name": rr.name if rr else "fusion:bm25+dense", "enabled": rr is not None},
         "hint": "" if isinstance(llm, ApiLLM) else "未配置 KB_LLM_API_KEY，当前为 Mock 模式；在 backend/.env 填写后重启即可启用真实模型。",
     }

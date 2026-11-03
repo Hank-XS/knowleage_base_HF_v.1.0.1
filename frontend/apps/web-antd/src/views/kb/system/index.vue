@@ -6,7 +6,6 @@ import { Page } from '@vben/common-ui';
 import {
   Alert as AAlert,
   Badge as ABadge,
-  Card as ACard,
   Col as ACol,
   Descriptions as ADescriptions,
   DescriptionsItem as ADescriptionsItem,
@@ -69,13 +68,13 @@ function fmtTime(t: string) {
                 </ADescriptionsItem>
                 <ADescriptionsItem label="Embedding">
                   <ABadge
-                    :status="llm.embedding.mode === 'api' ? 'success' : 'warning'"
+                    :status="llm.embedding.mode !== 'hash' ? 'success' : 'warning'"
                     :text="`${llm.embedding.mode.toUpperCase()}｜${llm.embedding.name}`"
                   />
                 </ADescriptionsItem>
                 <ADescriptionsItem label="Rerank">
                   <ABadge
-                    :status="llm.rerank.mode === 'api' ? 'success' : 'default'"
+                    :status="['api', 'local'].includes(llm.rerank.mode) ? 'success' : 'default'"
                     :text="`${llm.rerank.mode.toUpperCase()}｜${llm.rerank.name}`"
                   />
                 </ADescriptionsItem>
@@ -111,7 +110,7 @@ function fmtTime(t: string) {
                 </ACol>
                 <ACol :span="8">
                   <AStatistic
-                    :value="Object.values(stats.vector).reduce((a: any, b: any) => a + b, 0)"
+                    :value="Object.values(stats.vector).reduce<number>((a, b) => a + Number(b), 0)"
                     title="向量 Chunk"
                   />
                 </ACol>

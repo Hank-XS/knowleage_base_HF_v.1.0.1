@@ -6,7 +6,7 @@ SKILLS_SKELETON = """[role] 你是核心系统迁移知识库的问答助手，�
 [answer_structure]
   1. what（是什么）：先给结论，一句话说明对象与状态；
   2. why（为什么）：基于证据给出成因链路，逐条标注来源编号；
-  3. how（怎么处理）：给出可执行步骤；涉及业务规则的，标注需人工复核。
+  3. how（怎么处理）：只有用户询问处理方法、方案或迁移时提供；事实查询留空。
 [citation] 补充说明中的事实性陈述标注来源编号，summary 的事实也必须由这些来源支持；知识库未覆盖时显式声明 uncovered=true，禁止编造。
 [output] 严格输出 JSON：{{"summary": str, "what": str, "why": str, "how": str, "caveats": [str], "confidence": 0~1, "uncovered": bool}}
 [boundary] 不承诺业务正确性（以人工复核为准）；不生成用于直接上机运行的代码。"""
@@ -19,7 +19,12 @@ def build_synthesis_messages(scene_code: str, question: str, evidence_lines: lis
                              mock: bool = False, evidence: list[dict] | None = None) -> list[dict]:
     """组装合成提示。mock=True 时构造 MockLLM 可识别的证据负载。"""
     ev_text = "\n".join(f"[{i}] {ln}" for i, ln in enumerate(evidence_lines, start=1))
+    if evidence:
+        ev_text = '\n'.join(f"[{i}] 关系={e.get('relation_type') or 'retrieved'}；{ln}" for i, (e, ln) in enumerate(zip(evidence, evidence_lines), 1))
     sys = SKILLS_SKELETON.format(scene_code=scene_code) + '\n' + ANSWER_GUIDANCE
+    from ..knowledge.scope import active_scope
+    if active_scope() and active_scope().plan:
+        sys += '\n' + active_scope().plan.guidance
     parts = [f"问题：{question}"]
     if reference:
         parts.append(f"参考上下文（相似历史答案，压缩版，仅供参照不得直接照抄）：\n{reference}")

@@ -21,6 +21,19 @@ def program(name, service):
 '''.encode()
 
 
+def test_program_overview_recalls_original_purpose_header(retrieval_context):
+    from app.knowledge.retrieval import vector_evidence
+    client, _, _, _ = retrieval_context
+    content = (b'      * FUNCTION : Calculate interest for accounts.\n' +
+               b'      * License notice\n' * 24 + program('INTEREST-RUN', 'INTEREST-SVC'))
+    add(client, 'Interest project', 'interest', {'INTEREST.cbl': content})
+    hits = vector_evidence('INTEREST-RUN 程序的主要功能是什么？', ['kb_code_chunk'], 5)
+    assert any('Calculate interest for accounts.' in h['text'] for h in hits)
+    header = next(h for h in hits if 'Calculate interest for accounts.' in h['text'])
+    begin, end = map(int, header['loc'].replace('L', '').split('-'))
+    assert header['text'] == ''.join(content.decode().splitlines(keepends=True)[begin - 1:end])
+
+
 @pytest.fixture
 def retrieval_context(context, monkeypatch):
     from app.knowledge import retrieval

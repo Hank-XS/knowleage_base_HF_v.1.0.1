@@ -3,20 +3,28 @@ import type { KbAnswerPayload, KbSource, KbSourcePreview, QaSessionSummary } fro
 import { computed, nextTick, onMounted, ref } from 'vue';
 import { Page } from '@vben/common-ui';
 import { useUserStore } from '@vben/stores';
-import { Alert, Button, Card, Empty, Input, InputSearch, Modal, Spin, Switch, Tag, message } from 'ant-design-vue';
-import { ask, askAgent, createSession, getQaHistory, getQaRuntime, listQaSessions, previewSource, reviewAnswer } from '#/api/kb';
+import { Alert, Button, Card, Empty, Input, InputSearch, Modal, Select, Spin, Tag, message } from 'ant-design-vue';
+import { askAgent, createSession, getQaHistory, getQaRuntime, listQaSessions, previewSource, reviewAnswer, submitAnswerFeedback } from '#/api/kb';
 
 defineOptions({ name: 'KbQa' });
 interface ChatItem { role: 'user' | 'assistant'; question: string; answer?: KbAnswerPayload; error?: string }
 const userStore = useUserStore();
 const canReview = computed(() => ['biz', 'gov', 'admin', 'arch'].includes(userStore.userInfo?.roles?.[0] || ''));
 const sessionId = ref(''); const question = ref(''); const loading = ref(false); const opening = ref(true);
-const chat = ref<ChatItem[]>([]); const listRef = ref<HTMLElement>(); const agentMode = ref(true);
+const chat = ref<ChatItem[]>([]); const listRef = ref<HTMLElement>();
 const sessions = ref<QaSessionSummary[]>([]); const historySearch = ref(''); const historyPage = ref(1); const historyTotal = ref(0); const historyLoading = ref(false);
 const runtime = ref<Awaited<ReturnType<typeof getQaRuntime>>>();
 const detailsOpen = ref(false); const selectedAnswer = ref<KbAnswerPayload>(); const reviewLoading = ref(false);
+const feedbackOpen = ref(false); const feedbackAnswer = ref(''); const feedbackKind = ref('wrong_answer'); const feedbackComment = ref(''); const feedbackLoading = ref(false);
+const feedbackOptions = [{value:'helpful',label:'回答有帮助'}, {value:'missing',label:'没有找到需要的知识'}, {value:'wrong_source',label:'依据不相关'}, {value:'wrong_answer',label:'回答不准确'}];
+function openFeedback(answer: KbAnswerPayload) { feedbackAnswer.value = answer.answer_id; feedbackComment.value = ''; feedbackOpen.value = true; }
+async function sendFeedback() {
+  feedbackLoading.value = true;
+  try { await submitAnswerFeedback(feedbackAnswer.value, feedbackKind.value, feedbackComment.value); feedbackOpen.value = false; message.success('反馈已保存，待复核处理'); }
+  finally { feedbackLoading.value = false; }
+}
 const docOpen = ref(false); const docLoading = ref(false); const docPreview = ref<KbSourcePreview | null>(null); const activeSource = ref<KbSource>();
-const sourceNames: Record<string, string> = { code: '代码', doc: '文档', graph: '图谱', mapping: '映射' };
+const sourceNames: Record<string, string> = { code: '代码', cobol: '代码', cbl: '代码', cpy: '代码', doc: '文档', graph: '图谱', mapping: '映射' };
 const detailSections = [{ key: 'what', label: '结论说明' }, { key: 'why', label: '原因说明' }, { key: 'how', label: '处理建议' }] as const;
 let historySequence = 0;
 
@@ -54,7 +62,7 @@ async function send() {
   chat.value.push({ role: 'user', question: text }); await scrollBottom();
   try {
     if (!sessionId.value) sessionId.value = (await createSession()).session_id;
-    const answer = agentMode.value ? await askAgent(sessionId.value, text) : await ask(sessionId.value, text);
+    const answer = await askAgent(sessionId.value, text);
     chat.value.push({ role: 'assistant', question: text, answer });
     try { await loadSessions(); } catch { message.warning('答案已保存，历史列表暂未刷新'); }
   } catch (error: any) {
@@ -86,8 +94,7 @@ function highlightedContent(content: string, snippet?: string) {
 <template>
   <Page>
     <div class="qa-wrap">
-      <div class="qa-header"><div><h1>问答控制台</h1><p>基于已入库资料回答，支持在同一会话中继续追问。</p></div>
-        <details class="settings"><summary>问答设置</summary><div><Switch v-model:checked="agentMode" size="small" :disabled="loading" /> 自动选择检索工具</div></details>
+      <div class="qa-header"><div><h1>问答控制台</h1><p>直接提问或粘贴代码，系统会自动查找相关代码与业务知识。</p></div>
       </div>
       <Alert v-if="runtime?.llm.mode === 'mock'" class="runtime-note" type="info" show-icon message="当前为演示模式：展示检索片段，尚未启用模型综合回答。" />
       <div class="qa-main">
@@ -105,23 +112,26 @@ function highlightedContent(content: string, snippet?: string) {
           <div class="conversation-heading"><strong>{{ sessionId ? '当前会话' : '新对话' }}</strong><span>历史会话可直接打开并继续提问</span></div>
           <div ref="listRef" class="chat-list" :aria-busy="loading || opening">
             <Spin v-if="opening" class="opening" />
-            <Empty v-else-if="!chat.length" class="chat-empty" description="输入问题开始对话。写明工程、程序或文档名称，有助于定位相关资料。" />
+            <Empty v-else-if="!chat.length" class="chat-empty" description="可以粘贴代码查找出处、寻找相似实现，也可以直接描述业务问题。支持继续追问。" />
             <div v-for="(item, index) in chat" :key="index" class="row" :class="item.role">
               <div v-if="item.role === 'user'" class="bubble user-bubble">{{ item.question }}</div>
               <div v-else class="bubble answer-bubble">
                 <template v-if="item.answer">
                   <p class="answer-text">{{ summary(item.answer) }}</p>
-                  <p v-if="runtime?.llm.mode !== 'mock' && item.answer.answer.caveats?.length" class="answer-caveat">注意：{{ item.answer.answer.caveats.join('；') }}</p>
-                  <div class="answer-footer"><Button type="link" size="small" @click="openDetails(item.answer)">补充说明与依据<template v-if="item.answer.sources?.length">（{{ item.answer.sources.length }}）</template></Button><span v-if="item.answer.review_status === 'verified'">已复核</span></div>
+                  <div class="answer-footer"><Button type="link" size="small" @click="openDetails(item.answer)">补充说明与依据<template v-if="item.answer.sources?.length">（{{ item.answer.sources.length }}）</template></Button><Button type="link" size="small" @click="openFeedback(item.answer)">反馈</Button><span v-if="item.answer.review_status === 'verified'">已复核</span></div>
                 </template><p v-else class="error-text">{{ item.error }}</p>
               </div>
             </div>
             <div v-if="loading" class="row assistant"><div class="loading-bubble"><Spin size="small" /><span>正在查找资料并整理回答…</span></div></div>
           </div>
-          <div class="chat-input"><Input.TextArea v-model:value="question" :auto-size="{ minRows: 2, maxRows: 5 }" :disabled="loading || opening" placeholder="请输入问题（Enter 发送，Shift + Enter 换行）" @keydown.enter.exact="onEnter" /><Button type="primary" :loading="loading" :disabled="opening || !question.trim()" @click="send">发送</Button></div>
+          <div class="chat-input"><Input.TextArea v-model:value="question" :auto-size="{ minRows: 3, maxRows: 12 }" :disabled="loading || opening" placeholder="输入业务问题或粘贴代码，例如：这段代码在哪里？有没有类似实现？（Enter 发送，Shift + Enter 换行）" @keydown.enter.exact="onEnter" /><Button type="primary" :loading="loading" :disabled="opening || !question.trim()" @click="send">发送</Button></div>
         </Card>
       </div>
     </div>
+    <Modal v-model:open="feedbackOpen" title="回答反馈" ok-text="提交反馈" cancel-text="取消" :confirm-loading="feedbackLoading" @ok="sendFeedback">
+      <Select v-model:value="feedbackKind" :options="feedbackOptions" style="width:100%;margin-bottom:12px" aria-label="反馈类型" />
+      <Input.TextArea v-model:value="feedbackComment" :maxlength="1000" :rows="3" placeholder="补充具体问题或期望内容（可选）" />
+    </Modal>
     <Modal v-model:open="detailsOpen" title="补充说明与依据" :footer="null" width="800px">
       <div v-if="selectedAnswer" class="answer-details">
         <section v-for="section in detailSections" :key="section.key"><template v-if="selectedAnswer.answer[section.key]"><h3>{{ section.label }}</h3><p>{{ selectedAnswer.answer[section.key] }}</p></template></section>

@@ -65,6 +65,8 @@ blob-report/
 .coverage
 htmlcov/
 backend/tests/fixtures/
+# Local business evaluation questions are data, not source.
+backend/scripts/qa_cases.json
 # SQLite sidecars and CodeGraph-generated indexes
 *.sqlite3-wal
 *.sqlite3-shm
@@ -81,6 +83,11 @@ backend/tests/fixtures/
 *.tgz
 *.7z
 *.rar
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
 
 # Original project documents stay local; publish the maintained docs/ sources.
 /*.docx

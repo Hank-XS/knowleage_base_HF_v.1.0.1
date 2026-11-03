@@ -22,10 +22,14 @@ def project_node(node):
 
 
 def build_graph(store, *, library='', project='', version='', tag='', history=False,
-                detail=False, doc_id='', neighbors=True, view='structure', cross_system=False):
+                detail=False, doc_id='', neighbors=True, view='structure', cross_system=False, offset=0, limit=1000):
     from .associations import enrich, file_graph
-    dump = store.dump()
-    nodes, edges = enrich(classified_graph_nodes(dump['nodes']), dump['edges'])
+    from .relations import relation_graph
+    if offset < 0 or not 1 <= limit <= 2000:
+        raise ValueError('图谱分页范围无效')
+    snapshot = relation_graph(store)
+    dump = snapshot.dump()
+    nodes, edges = dump['nodes'], dump['edges']
     if not cross_system:
         edges = [e for e in edges if not e.get('props', {}).get('cross_system')]
     current = current_project_jobs()
@@ -63,13 +67,14 @@ def build_graph(store, *, library='', project='', version='', tag='', history=Fa
     scoped.sort(key=lambda n: (n['label'] in {'Field', 'DocumentSection'}, n['id'] not in owned, n['label']))
     ids = {n['id'] for n in scoped}
     edges = [e for e in edges if e['src'] in ids and e['dst'] in ids]
-    visible = scoped[:500]
-    visible_ids = {n['id'] for n in visible}
-    visible_edges = [e for e in edges if e['src'] in visible_ids and e['dst'] in visible_ids]
+    visible = scoped[offset:offset + limit]
+    visible_edges = edges[offset * 3:(offset + limit) * 3]
+    more = offset + limit < max(len(scoped), (len(edges) + 2) // 3)
     return dict(nodes=[dict(id=n['id'], label=n['label'], name=n['props'].get('name', n['id']),
                             props=n['props'], external=n['id'] not in owned) for n in visible],
-                edges=visible_edges[:1500], stats=dict(nodes=len(scoped), edges=len(edges),
+                edges=visible_edges, stats=dict(nodes=len(scoped), edges=len(edges),
                 cross_project=sum(bool(e.get('props', {}).get('cross_project')) for e in edges),
                 by_label=dict(Counter(n['label'] for n in scoped))),
-                truncated=len(scoped) > 500 or len(visible_edges) > 1500,
+                truncated=more, pagination=dict(offset=offset, limit=limit, next_offset=offset + limit if more else None),
+                generation=snapshot.generation,
                 scope=dict(doc_id=doc_id, library=library, project=project, version=version, view=view))

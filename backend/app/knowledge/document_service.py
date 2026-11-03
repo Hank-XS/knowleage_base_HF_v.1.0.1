@@ -54,7 +54,7 @@ def upload_document(*, filename, content, library_key, version, project='', purp
             ver = KbDocVersion(doc_id=doc.id, version=version)
             db.add(ver)
         ver.content, ver.object_key, ver.created_by = parsed['content'], key, author
-        ver.meta_json = {'warnings': parsed['warnings'], 'parser': parsed['parser'], **metadata}
+        ver.meta_json = {'warnings': parsed['warnings'], 'parser': parsed['parser'], 'quality': parsed['quality'], **metadata}
         db.query(KbDocChunk).filter(KbDocChunk.doc_id == doc.id, KbDocChunk.version == version).delete()
         chunks = [KbDocChunk(doc_id=doc.id, version=version, **{**chunk, 'title': chunk['title'][:256]}) for chunk in parsed['chunks']]
         db.add_all(chunks)
@@ -62,11 +62,18 @@ def upload_document(*, filename, content, library_key, version, project='', purp
         common = dict(doc_id=doc.id, library=lib, project=doc.project, purpose=purpose,
                       tags=doc.tags_json, version=version, is_current=True, source_path=key)
         embedder = get_embedder()
-        embeddings = embedder.embed([chunk.text for chunk in chunks])
+        from .representations import encode_many
+        parents = []
+        for chunk in chunks:
+            line = parsed['content'][:chunk.start_offset].count('\n') + 1
+            meta = {**common, 'title':chunk.title, 'text':chunk.text, 'doc_type':'doc',
+                    **chunk.meta_json, 'loc':f'L{line}-L{line + len(chunk.text.splitlines()) - 1}'}
+            parents.append((chunk.id, chunk.text, meta))
+        prepared = encode_many(parents, embedder)
         old_nodes = [n for n in graph_store.dump()['nodes'] if n['props'].get('doc_id') == doc.id]
         old_ids = {n['id'] for n in old_nodes}
         old_edges = [e for e in graph_store.dump()['edges'] if e['src'] in old_ids or e['dst'] in old_ids]
-        old_vectors = [c for c in vector_store._data['kb_doc_chunk'] if c['meta'].get('doc_id') == doc.id]
+        old_vectors = vector_store.export('kb_doc_chunk', {'doc_id':doc.id})
         try:
             vector_store.delete_by_meta('kb_doc_chunk', 'doc_id', doc.id)
             graph_store.delete_by_meta('doc_id', doc.id)
@@ -75,13 +82,11 @@ def upload_document(*, filename, content, library_key, version, project='', purp
             node_id = 'document/' + doc.id
             graph_store.upsert_node(node_id, 'Document', {**common, 'name': doc.name, 'kind': 'document'})
             graph_store.upsert_edge(system, 'CONTAINS', node_id, common)
-            for chunk, embedding in zip(chunks, embeddings):
+            for chunk, (embedding, vector_meta) in zip(chunks, prepared):
                 node = 'chunk/' + chunk.id
                 graph_store.upsert_node(node, 'DocumentSection', {**common, 'name': chunk.title, **chunk.meta_json})
                 graph_store.upsert_edge(node_id, 'CONTAINS', node, common)
-                vector_store.upsert('kb_doc_chunk', chunk.id, embedding,
-                                    {**common, 'title': chunk.title, 'text': chunk.text, 'doc_type': 'doc', 'embedding': embedder.name,
-                                     'loc': chunk.title, **chunk.meta_json})
+                vector_store.upsert('kb_doc_chunk', chunk.id, embedding, vector_meta)
             graph_store.save()
             vector_store.save()
             db.commit()

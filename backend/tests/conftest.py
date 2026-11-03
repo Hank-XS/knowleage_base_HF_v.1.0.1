@@ -12,7 +12,8 @@ import pytest
 _test_data = Path(tempfile.mkdtemp(prefix='hf-tests-')).resolve()
 os.environ['KB_DATA_DIR'] = str(_test_data)
 for _setting in ('KB_PG_DSN', 'KB_GRAPH_URL', 'KB_VECTOR_URI', 'KB_S3_ENDPOINT',
-                 'KB_LLM_API_KEY', 'KB_EMB_API_KEY'):
+                 'KB_LLM_API_KEY', 'DEEPSEEK_API_KEY', 'KB_EMB_API_KEY', 'KB_EMB_BASE_URL',
+                 'KB_EMB_LOCAL_PATH', 'KB_RERANK_LOCAL_PATH', 'KB_RERANK_URL'):
     os.environ[_setting] = ''
 os.environ['KB_AUTO_IMPORT'] = 'false'
 os.environ['KB_DATASET_ROOT'] = str(_test_data / 'missing-dataset')

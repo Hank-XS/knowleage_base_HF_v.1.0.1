@@ -19,6 +19,11 @@ from ..response import KbError, ok
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 
+def _readable_doc(doc_id: str, user: User = Depends(current_user)):
+    from ..knowledge.access import readable_document
+    readable_document(doc_id, user)
+
+
 @router.get('/catalog')
 def catalog_options(request: Request, kb: str = '', project: str = '', user: User = Depends(current_user)):
     return ok(catalog.catalog_options(kb, project), request)
@@ -95,7 +100,7 @@ def get_docs(
     return ok(data, request)
 
 
-@router.get("/docs/{doc_id}")
+@router.get("/docs/{doc_id}", dependencies=[Depends(_readable_doc)])
 def get_doc(doc_id: str, request: Request, user: User = Depends(current_user)):
     doc = km.get_doc(doc_id, with_content=True)
     if not doc:
@@ -103,7 +108,7 @@ def get_doc(doc_id: str, request: Request, user: User = Depends(current_user)):
     return ok(doc, request)
 
 
-@router.delete("/docs/{doc_id}")
+@router.delete("/docs/{doc_id}", dependencies=[Depends(_readable_doc)])
 def remove_doc(doc_id: str, request: Request,
                user: User = Depends(require_roles("gov", "admin", "dev"))):
     if not km.delete_doc(doc_id):
@@ -179,7 +184,7 @@ async def upload_doc(
     return ok(doc, request)
 
 
-@router.get('/docs/{doc_id}/original')
+@router.get('/docs/{doc_id}/original', dependencies=[Depends(_readable_doc)])
 def original(doc_id: str, version: str = '', user: User = Depends(current_user)):
     from ..db import SessionLocal, KbDocument, KbDocVersion
     from ..stores.objects import object_store
@@ -199,7 +204,7 @@ def original(doc_id: str, version: str = '', user: User = Depends(current_user))
                         headers={'Content-Disposition': "attachment; filename*=UTF-8''" + quote(filename)})
 
 
-@router.get("/docs/{doc_id}/chunks")
+@router.get("/docs/{doc_id}/chunks", dependencies=[Depends(_readable_doc)])
 def get_chunks(doc_id: str, request: Request,
                version: str = "", keyword: str = "",
                user: User = Depends(current_user)):
@@ -209,14 +214,14 @@ def get_chunks(doc_id: str, request: Request,
     return ok(data, request)
 
 
-@router.get("/docs/{doc_id}/versions")
+@router.get("/docs/{doc_id}/versions", dependencies=[Depends(_readable_doc)])
 def get_versions(doc_id: str, request: Request, user: User = Depends(current_user)):
     if not km.get_doc(doc_id, with_content=False):
         raise KbError("40401", "文档不存在")
     return ok(km.list_versions(doc_id), request)
 
 
-@router.get("/docs/{doc_id}/diff")
+@router.get("/docs/{doc_id}/diff", dependencies=[Depends(_readable_doc)])
 def get_diff(doc_id: str, request: Request,
              old: str = Query(...), new: str = Query(...),
              user: User = Depends(current_user)):

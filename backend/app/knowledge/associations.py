@@ -51,6 +51,8 @@ def enrich(store_nodes, store_edges):
                 index = programs if ref['kind'] == 'calls' else copies
                 name = PurePosixPath(ref['name'].strip('"\'')).stem.upper()
                 same_job = [n for n in index.get(name, []) if n['props']['project_job'] == job.id]
+                if ref['kind'] == 'calls' and same_job:
+                    continue  # A local definition wins; do not invent an extra external call.
                 if ref['kind'] == 'imports' and not same_job and any(d.project_job == job.id and d.doc_type.lower() == 'cpy' and PurePosixPath(d.source_path).stem.upper() == name for d in docs):
                     continue  # A deliberately cleaned local definition must not be rebound elsewhere.
                 candidates = same_job if ref['kind'] == 'imports' and same_job else [n for n in index.get(name, []) if n['props']['project_job'] != job.id]
@@ -85,6 +87,36 @@ def enrich(store_nodes, store_edges):
                                source_job=job.id, target_job=target['props']['project_job'], line=line,
                                symbol=name, evidence=snippet.strip()[:600], method='literal_unique_symbol',
                                reason='静态引用与当前有效工程中的唯一同名定义匹配')))
+        # Explicit document mentions are evidence of a reference, not inferred business equivalence.
+        from .lexical import identifiers
+        documents = db.scalars(select(database.KbDocument).where(database.KbDocument.asset_type == 'document',
+                                 database.KbDocument.is_current == 1, database.KbDocument.vectorized == 1)).all()
+        node_ids = {n['id'] for n in store_nodes}
+        for document in documents:
+            source_id = 'document/' + document.id
+            if source_id not in node_ids:
+                continue
+            version = db.scalar(select(database.KbDocVersion).where(database.KbDocVersion.doc_id == document.id,
+                                   database.KbDocVersion.version == document.version))
+            if not version:
+                continue
+            for symbol in identifiers(version.content) & (programs.keys() | copies.keys()):
+                candidates = programs.get(symbol, []) + copies.get(symbol, [])
+                preferred = [n for n in candidates if n['props'].get('library') == document.library_key]
+                candidates = preferred or candidates
+                preferred = [n for n in candidates if n['props'].get('project') == document.project]
+                candidates = preferred or candidates
+                if len(candidates) != 1:
+                    continue
+                match = re.search(r'(?<![\w-])' + re.escape(symbol) + r'(?![\w-])', version.content, re.I)
+                if match:
+                    line = version.content[:match.start()].count('\n') + 1
+                    derived.append(dict(src=source_id, dst=candidates[0]['id'], rel='MENTIONS',
+                        props=dict(line=line, symbol=symbol, evidence=version.content.splitlines()[line - 1][:600],
+                                   method='explicit_unique_mention', source_doc=document.id,
+                                   cross_project=document.project != candidates[0]['props'].get('project'),
+                                   cross_system=document.library_key != candidates[0]['props'].get('library'),
+                                   reason='文档明确提及唯一程序或 Copybook 名称，仅表示引用')))
     doc_ids = {(d.project_job, d.source_path.split('/source/', 1)[-1]): d.id for d in docs}
     enriched = [{**n, 'props': {**n['props'], **({'doc_id': doc_ids[(n['props'].get('project_job'), n['props'].get('path'))]} if
                  (n['props'].get('project_job'), n['props'].get('path')) in doc_ids else {})}} for n in store_nodes]

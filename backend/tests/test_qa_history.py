@@ -6,12 +6,15 @@ from .test_code_projects import setup_project
 
 def test_history_restore_search_and_session_ownership(setup_project, monkeypatch):
     from app import db as database
+    from app import deps
     from app.qa import flow as flow_module
     from app.routers import qa
     from app.llm.base import MockLLM
     from app.knowledge import catalog
 
     client, sessions, _, _ = setup_project
+    monkeypatch.setattr(database, 'SessionLocal', sessions)
+    monkeypatch.setattr(deps, 'SessionLocal', sessions)
     monkeypatch.setattr(qa, 'SessionLocal', sessions)
     monkeypatch.setattr(catalog, 'SessionLocal', sessions)
     monkeypatch.setattr(flow_module, 'SessionLocal', sessions)
@@ -79,5 +82,5 @@ def test_answer_contract_preserves_detail_and_supports_legacy_answers():
         assert parsed['summary'] == answer['summary'] and parsed['why'] == long_detail
         assert parser('{"what":"旧答案","how":"旧操作"}')['summary'] == '旧答案'
     prompt = build_synthesis_messages('general', '测试问题', [])[0]['content']
-    assert 'summary' in prompt and '150~250' in prompt
+    assert 'summary' in prompt and '120' in prompt
     assert 'summary' in SYSTEM_PROMPT and '不描述检索步骤' in SYSTEM_PROMPT

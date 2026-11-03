@@ -27,9 +27,21 @@ def current_question(query):
     return query.split('（相关实体：', 1)[0].split('（承接上文问题：', 1)[0]
 
 
+def executable_line(line):
+    """For control-flow lookup only: ignore comments, sequence columns and quoted examples."""
+    fixed = len(line) > 7 and not line[:6].strip(' 0123456789')
+    if fixed and line[6] in '*/':
+        return ''
+    code = line[7:72] if fixed else line
+    code = re.sub(r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"", lambda m: ' ' * len(m[0]), code)
+    return code.split('*>', 1)[0]
+
+
 def actions(query):
     query = current_question(query).lower()
     groups = []
+    if any(word in query for word in ('读取', '读文件', 'read ')):
+        groups += ['READ']
     if any(word in query for word in ('调用', '外部程序', 'call', '传参', '参数变量')):
         groups += ['CALL', 'USING']
     if any(word in query for word in ('计算', '公式', 'compute', '累计', '累加')):
@@ -37,6 +49,11 @@ def actions(query):
     if any(word in query for word in ('是否', '实现', '未实现', '待实现')):
         groups += ['TO BE IMPLEMENTED', 'TODO', 'EXIT', 'CONTINUE']
     return groups
+
+
+def overview(query):
+    q = current_question(query).lower()
+    return not actions(query) and any(word in q for word in ('功能', '用途', '作用', '做什么', '干什么', 'purpose', 'overview'))
 
 
 def focus(query, text, start_line=1, max_lines=14):
@@ -56,6 +73,8 @@ def focus(query, text, start_line=1, max_lines=14):
         if comment and any(op in code.upper() for op in ('TO BE IMPLEMENTED', 'TODO')) and 'TODO' in operations:
             score += 6
         score += len(query_ids & identifiers(code))
+        if overview(query) and comment and re.search(r'\b(?:FUNCTION|PURPOSE|DESCRIPTION)\s*[:.]', code, re.I):
+            score += 10
         scores.append(score)
     center = max(range(len(lines)), key=lambda i: scores[i])
     begin = max(0, center - 4); end = min(len(lines), begin + max_lines)
@@ -70,7 +89,7 @@ class BM25:
         for index, row in enumerate(rows):
             meta = row['meta']; title = meta.get('title') or meta.get('code_unit') or ''
             filename = PurePosixPath(meta.get('source_path', '').replace('\\', '/')).stem
-            tokens = terms((title + ' ') * 3 + (filename + ' ') * 3 + meta.get('text', ''))
+            tokens = terms((title + ' ') * 3 + (filename + ' ') * 3 + (meta.get('search_text') or meta.get('text', '')))
             self.lengths.append(len(tokens))
             for token, count in Counter(tokens).items():
                 self.postings[token].append((index, count))
@@ -91,14 +110,15 @@ _indexes = WeakKeyDictionary()
 _lock = RLock()
 
 
-def index_for(store, collection, current_jobs):
+def index_for(store, collection, current_jobs, denied_paths=None):
     with _lock:
-        key = store.revision, tuple(sorted(current_jobs))
+        key = store.revision, tuple(sorted(current_jobs)), tuple(sorted(denied_paths or []))
         cached = _indexes.get(store, {}).get(collection)
         if cached and cached[0] == key:
             return cached[1]
         revision, rows = store.metadata_snapshot(collection)
         rows = [row for row in rows if not row['meta'].get('project_job') or row['meta']['project_job'] in current_jobs]
+        rows = [row for row in rows if row['meta'].get('source_path', '') not in (denied_paths or set())]
         index = BM25(rows)
-        _indexes.setdefault(store, {})[collection] = ((revision, key[1]), index)
+        _indexes.setdefault(store, {})[collection] = ((revision, key[1], key[2]), index)
         return index

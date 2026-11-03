@@ -14,6 +14,11 @@ SYNONYMS = {
 
 
 def normalize_question(question: str, scene_code: str, entities: list[str]) -> str:
+    from .query_parser import parse_query, code_tokens
+    plan = parse_query(question)
+    if plan.code:
+        # Keep string case and literal/operator differences in pasted code cache identities.
+        return f'{scene_code}|code-v1|{plan.mode}|{plan.narrative.strip().lower()}|{code_tokens(plan.code)!r}'
     norm = question.strip().lower()
     norm = re.sub(r"\s+", "", norm)
     norm = re.sub(r"[？?！!。，,；;：:\"'（）()\[\]【】]", "", norm)

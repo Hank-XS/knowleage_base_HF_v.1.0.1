@@ -67,7 +67,7 @@ python scripts/mcp_ingest_once.py --one-shot
 | 入口 | 编排方式 |
 |------|----------|
 | MCP Host（Cursor） | Host 侧模型自动选 MCP Tools |
-| `POST /qa/ask_agent` | 后端 Agent（有 LLM Key 时 tool calling；否则启发式调度） |
+| `POST /qa/ask_agent` | `mode=auto` 按复杂度选择 Flow/Agent；可显式指定 `agent` 或 `flow` |
 | `POST /qa/ask` | 原单一 Flow 固定流水线 |
 
-前端问答页开关：**Agent 自动调度工具**。
+前端问答页保留单一输入框，后台自动匹配，无模式开关。Demo 默认关闭模型重排，生成模型与语义向量可分别配置，见 [安装与启动](../docs/CodeGraph安装与启动.md)。

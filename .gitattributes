@@ -5,6 +5,7 @@ hf_data/* export-ignore
 hf_data/README.md -export-ignore
 backend/.local export-ignore
 backend/tests/fixtures export-ignore
+backend/scripts/qa_cases.json export-ignore
 .local export-ignore
 .local-runtime export-ignore
 .local-tools export-ignore
@@ -21,4 +22,9 @@ artifacts export-ignore
 *.sqlite3 export-ignore
 *.db export-ignore
 *.log export-ignore
+*.safetensors export-ignore
+*.ckpt export-ignore
+*.pt export-ignore
+*.pth export-ignore
+*.onnx export-ignore
 /*.docx export-ignore

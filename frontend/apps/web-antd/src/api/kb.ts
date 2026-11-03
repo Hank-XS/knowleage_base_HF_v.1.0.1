@@ -61,6 +61,9 @@ export interface TaggingTask {
 }
 
 export interface TagItem {
+  confidence?: number;
+  node_name?: string;
+  evidence?: string[];
   item_id: string;
   node_id: string;
   reason?: string;
@@ -128,12 +131,12 @@ export function ask(sessionId: string, question: string) {
   });
 }
 
-/** 提问（Agent：自动调度 search_doc / search_code / search_graph 等工具） */
+/** 提问（后台按问题复杂度自动选择固定检索或 Agent 调度） */
 export function askAgent(sessionId: string, question: string) {
   return requestClient.post<KbAnswerPayload & { orchestrator?: string }>(
     '/qa/ask_agent',
     {
-      mode: 'agent',
+      mode: 'auto',
       question,
       session_id: sessionId,
     },
@@ -148,6 +151,10 @@ export function reviewAnswer(
   return requestClient.post<any>(`/qa/answers/${answerId}/review`, {
     verdict,
   });
+}
+
+export function submitAnswerFeedback(answerId: string, kind: string, comment = '') {
+  return requestClient.post(`/qa/answers/${answerId}/feedback`, { kind, comment });
 }
 
 /** 依据来源文档预览 */
@@ -399,6 +406,8 @@ export function graphStruct(params: Record<string, any> = {}) {
   return requestClient.get<{
     edges: GraphEdge[];
     nodes: GraphNode[];
+    pagination?: { next_offset: number | null };
+    truncated?: boolean;
     stats: { by_label: Record<string, number>; edges: number; nodes: number };
   }>('/graph/struct', { params });
 }

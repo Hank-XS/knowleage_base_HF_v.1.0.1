@@ -124,6 +124,9 @@ def extract_document(filename, content):
             text = content.decode('utf-8-sig').replace('\r\n', '\n').replace('\r', '\n')
         except UnicodeDecodeError as exc:
             raise ValueError('Markdown 请使用 UTF-8 编码') from exc
+        from .quality import prepare_text
+        text, quality = prepare_text(text)
+        warnings.extend(quality['warnings'])
         blocks = markdown_blocks(text)
     else:
         elements = []
@@ -206,5 +209,9 @@ def extract_document(filename, content):
             cursor += len(element['text'])
     if not blocks:
         raise ValueError('文件没有可提取的正文内容')
-    return dict(content=text, chunks=chunks_from_blocks(text, blocks), warnings=warnings,
+    from .quality import document_quality
+    chunks = chunks_from_blocks(text, blocks)
+    quality = document_quality(text, chunks)
+    warnings = list(dict.fromkeys([*warnings, *quality['warnings']]))
+    return dict(content=text, chunks=chunks, warnings=warnings, quality=quality,
                 parser=extension[1:], blocks=len(blocks))

@@ -21,16 +21,22 @@ from ..support_annotate import annotate_code
 def _trim_evidence(items: list[dict], limit: int = 8) -> list[dict]:
     out = []
     for e in items[:limit]:
+        from ..knowledge.passage import bounded
+        e = bounded(e)
         out.append({
             "channel": e.get("channel"),
+            "relation_type": e.get('relation_type', ''),
+            "context_partial": e.get('context_partial', False),
             "kind": e.get("kind", "chunk"),
             "ref": e.get("ref"),
             "label": e.get("label"),
             "loc": e.get("loc", ""),
             "path": e.get("obj") or e.get("path") or e.get("label") or "",
             "score": e.get("rank_score", e.get("score")),
-            "snippet": (e.get("text") or "")[:1400],
+            "snippet": e.get("text") or "",
+            "content_truncated": e.get('content_truncated', False),
             "graph_id": e.get("graph_id"),
+            **{k: e.get(k, '') for k in ('project', 'library', 'version', 'source_path', 'focus_title', 'context_relation', 'required_context')},
         })
     return out
 
@@ -84,7 +90,7 @@ def tool_query_cache(question: str, scene_code: str = "ATM") -> dict:
     if verdict.get("route") == "exact" and verdict.get("answer"):
         ans = verdict["answer"]
         payload["answer"] = ans.get("answer")
-        payload["sources"] = ans.get("sources", [])[:8]
+        payload["sources"] = ans.get("sources", [])
         payload["answer_id"] = ans.get("answer_id")
     elif verdict.get("route") == "similar" and verdict.get("answer"):
         payload["reference"] = cache.compress_reference(verdict["answer"])
@@ -136,9 +142,47 @@ def tool_annotate_code(code: str, language: str = "cobol", hint: str = "") -> di
 def tool_preview_source(path: str = "", source_type: str = "doc",
                         ref: str = "", loc: str = "") -> dict:
     """依据文档/代码/图谱原文预览。"""
+    from ..knowledge.scope import active_scope
+    from ..knowledge.evidence import normalize, span
+    from ..knowledge import lexical
+    scope = active_scope()
+    normalized_path = path.replace('\\', '/')
+    if scope and not scope.allows(normalized_path):
+        return {'tool':'preview_source', 'available':False, 'error':'该资料不可访问'}
+    if scope and scope.paths is not None and source_type == 'graph':
+        node = retrieval.graph_store.node(path.removeprefix('graph://'))
+        if not node or node['props'].get('source_path') not in scope.paths:
+            return {'tool': 'preview_source', 'available': False, 'error': '请使用本次检索返回的图谱实体路径预览。'}
+    if scope and scope.paths is not None and source_type != 'graph':
+        # Only exact uploaded paths or unambiguous scoped basenames; never a global first match.
+        allowed = scope.paths | scope.evidence_paths
+        matches = [p for p in allowed if normalized_path == p or p.endswith('/' + normalized_path)] if normalized_path else []
+        if len(matches) == 1:
+            path = matches[0]
+        elif normalized_path not in allowed:
+            return {'tool': 'preview_source', 'available': False, 'error': '原文不在当前问题范围，请先检索对应依赖的证据。'}
     doc = preview_source(path=path, source_type=source_type, ref=ref, loc=loc)
+    if scope:
+        source = next((d for d in scope.docs if d.source_path == path), None)
+        if source:
+            doc.update(project=source.project, library=source.library_key, version=source.version)
     # MCP 侧不宜返回超长正文，截断
     content = doc.get("content") or ""
+    if doc.get('available') and normalize({'type': doc.get('type'), 'path': doc.get('path')})['channel'] == 'code':
+        lines = content.splitlines(keepends=True)
+        bounds = span({'loc': loc})
+        if loc and (not bounds or bounds[0] < 1 or bounds[1] < bounds[0] or bounds[1] > len(lines)):
+            return {'tool': 'preview_source', 'available': False, 'error': '行号无效或超出文件范围。'}
+        if bounds:
+            begin, end = bounds
+            end = min(end, begin + 79)
+            content = ''.join(lines[begin - 1:end])
+        else:
+            content, begin, end = lexical.focus(scope.question if scope else ref, content, max_lines=40)
+        doc['loc'] = f'L{begin}-L{end}'
+        doc['type'] = 'code'
+        # Code is bounded by complete lines, not a character cut with misleading line numbers.
+        return {**doc, 'content': content, 'truncated': end - begin + 1 < len(lines), 'tool': 'preview_source'}
     return {**doc, "content": content[:12_000],
             "truncated": len(content) > 12_000, "tool": "preview_source"}
 

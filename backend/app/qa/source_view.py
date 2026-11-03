@@ -37,6 +37,8 @@ def _resolve_file(path_hint: str) -> tuple[str | None, str]:
         text = object_store.get_text(hint)
         if text is not None:
             return text, hint
+        if hint.startswith('kb-raw/'):
+            return None, hint  # An absent exact version must not resolve to another upload's basename.
 
     # 2) hf_data 相对路径
     ds = default_dataset_root()
@@ -51,6 +53,8 @@ def _resolve_file(path_hint: str) -> tuple[str | None, str]:
         if not root.exists():
             continue
         hits = list(root.rglob(name))
+        if len(hits) > 1:
+            return None, hint
         if hits:
             text = _read_text(hits[0])
             if text is not None:
@@ -76,7 +80,7 @@ def _chunks_for_path(path_hint: str) -> str:
             sp = str(meta.get("source_path") or "").replace("\\", "/")
             if not sp:
                 continue
-            if sp == hint or sp.endswith("/" + hint) or hint.endswith(sp) or Path(sp).name == Path(hint).name:
+            if sp == hint or ('/' not in hint and Path(sp).name == Path(hint).name):
                 t = meta.get("text") or ""
                 if t:
                     loc = meta.get("loc") or meta.get("title") or ""
@@ -85,11 +89,13 @@ def _chunks_for_path(path_hint: str) -> str:
 
 
 def _graph_doc(ref: str, source: dict | None = None) -> dict:
+    from ..knowledge.relations import relation_graph
+    graph = relation_graph(graph_store)
     name = ref or (source or {}).get("ref") or ""
-    nodes = graph_store.find_by_name(name) if name else []
-    node = nodes[0] if nodes else None
-    if node is None and source and source.get("obj"):
-        node = graph_store.node(source["obj"])
+    nodes = graph.find_by_name(name) if name else []
+    node = graph.node(source['obj']) if source and source.get('obj') else None
+    if node is None:
+        node = nodes[0] if len(nodes) == 1 else None
     lines = []
     if node:
         lines.append(f"# 图谱实体：{node['props'].get('name', node['id'])}")
@@ -100,14 +106,15 @@ def _graph_doc(ref: str, source: dict | None = None) -> dict:
             if v is None or v == "":
                 continue
             lines.append(f"- {k}: {v}")
-        ns, es = graph_store.neighbors(node["id"], max_hops=1)
+        ns, es = graph.neighbors(node["id"], max_hops=1)
         if es:
             lines.append("")
             lines.append("## 邻接关系")
             for e in es[:30]:
-                dst = graph_store.node(e["dst"])
+                dst = graph.node(e["dst"])
+                src = graph.node(e['src'])
                 dname = (dst or {}).get("props", {}).get("name", e["dst"])
-                lines.append(f"- {e['rel']} → {dname}")
+                lines.append(f"- {(src or {}).get('props', {}).get('name', e['src'])} --{e['rel']}→ {dname}")
     body = "\n".join(lines) if lines else (source or {}).get("snippet") or "未找到图谱实体详情"
     return {
         "title": name or "图谱依据",
@@ -139,7 +146,7 @@ def preview_source(
 
     if st == "graph":
         return _graph_doc(ref, {
-            "ref": ref, "obj": obj, "loc": loc, "snippet": snippet, "label": label,
+            "ref": ref, "obj": obj or path.removeprefix('graph://'), "loc": loc, "snippet": snippet, "label": label,
         })
 
     content, resolved = _resolve_file(path_hint)

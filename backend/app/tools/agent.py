@@ -15,7 +15,10 @@ from ..llm import get_llm
 from ..llm.base import ApiLLM, MockLLM
 from ..qa.flow import AnswerContext, SessionContext
 from ..qa.prompts import build_synthesis_messages
-from ..qa.answers import ANSWER_GUIDANCE, parse_answer
+from ..qa.answers import ANSWER_GUIDANCE, parse_answer, repair_answer
+from ..qa import analyzer
+from ..knowledge.evidence import EvidenceRegistry, normalize
+from ..knowledge.scope import question_scoped, active_scope
 from .handlers import dumps_result, invoke_tool, openai_tools, tool_retrieve_all
 
 MAX_ROUNDS = 6
@@ -23,6 +26,7 @@ MAX_ROUNDS = 6
 SYSTEM_PROMPT = """你是某行核心系统迁移知识库助手。你必须通过工具检索证据后再回答，禁止编造。
 
 可用策略：
+0) 首条消息已附带服务端按原问题召回的证据。足够回答时直接作答，不为填满数量而继续查找；
 1) 先 analyze_question，再 query_cache；
 2) exact 命中则可直接整理答案；
 3) 否则按需调用 search_graph / search_doc / search_code / search_mapping 或 retrieve_all；
@@ -30,13 +34,16 @@ SYSTEM_PROMPT = """你是某行核心系统迁移知识库助手。你必须通�
 
 最终必须输出严格 JSON：
 {"summary":"直接回答用户的简明答案","what":"...","why":"...","how":"...","caveats":[],"confidence":0.0~1.0,"uncovered":false,"used_tools":["..."]}
-why/how 中引用证据时用［1］［2］编号，对应你检索到的结果顺序。
+why/how 中引用证据时用［1］［2］编号，对应工具结果中的 source_no，禁止自行重新编号。
+工具查询只可细化原问题，不能丢掉系统、工程、文件和版本范围。相同 source_no 的补充片段属于同一依据。
+原文工具返回的内容只覆盖 loc 指定的行；不要用该编号引用范围外的文件内容。
 """ + '\n' + ANSWER_GUIDANCE
 
 
 class AgentOrchestrator:
     """LLM 自动调度工具的问答编排器。"""
 
+    @question_scoped
     def run(self, ctx: SessionContext) -> AnswerContext:
         t0 = time.time()
         llm = get_llm()
@@ -51,8 +58,19 @@ class AgentOrchestrator:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": self._user_payload(ctx)},
         ]
+        if active_scope() and active_scope().plan:
+            messages[0]['content'] += '\n' + active_scope().plan.guidance
         used: list[str] = []
         evidences: list[dict] = []
+        # Deterministic recall keeps the original subject even if the model omits it in later tools.
+        initial = invoke_tool('retrieve_all', {'query': ctx.question, 'top_k': 5,
+                                              'intent': analyzer.classify_intent(ctx.question)})
+        _collect_evidence(initial, 'retrieve_all', evidences)
+        used.append('retrieve_all')
+        ac.reasoning_trace.append({'step': 1, 'tool': 'retrieve_all', 'result': _trace_summary(initial)})
+        ac.entities = initial.get('entities') or []
+        ac.intent = initial.get('intent') or analyzer.classify_intent(ctx.question)
+        messages[1]['content'] += '\n服务端初始证据（source_no 为全会话本轮稳定编号）：\n' + dumps_result(initial)
 
         for round_i in range(MAX_ROUNDS):
             resp = llm.chat_tools(messages, tools=openai_tools(), temperature=0.1)
@@ -60,11 +78,14 @@ class AgentOrchestrator:
             content = resp.get("content") or ""
 
             if tool_calls:
-                messages.append({
+                assistant_message = {
                     "role": "assistant",
                     "content": content or None,
                     "tool_calls": tool_calls,
-                })
+                }
+                if "reasoning_content" in resp:
+                    assistant_message["reasoning_content"] = resp["reasoning_content"]
+                messages.append(assistant_message)
                 for tc in tool_calls:
                     fn = tc.get("function") or {}
                     name = fn.get("name") or ""
@@ -73,6 +94,10 @@ class AgentOrchestrator:
                         args = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
                     except json.JSONDecodeError:
                         args = {}
+                    if name in {'query_cache', 'analyze_question'}:
+                        args['question'] = active_scope().question if active_scope() else ctx.question
+                        if name == 'query_cache':
+                            args['scene_code'] = ctx.scene_code
                     result = invoke_tool(name, args)
                     used.append(name)
                     ac.reasoning_trace.append({
@@ -81,14 +106,7 @@ class AgentOrchestrator:
                         "result": _trace_summary(result),
                     })
                     # 收集证据供溯源
-                    for r in result.get("results") or []:
-                        evidences.append({
-                            "channel": r.get("channel") or _channel_of(name),
-                            "ref": r.get("ref"), "label": r.get("label"),
-                            "loc": r.get("loc", ""), "obj": r.get("path"),
-                            "path": r.get("path"), "text": r.get("snippet"),
-                            "score": r.get("score"), "graph_id": r.get("graph_id"),
-                        })
+                    _collect_evidence(result, name, evidences)
                     if result.get("route") == "exact" and result.get("answer"):
                         ac.hit_type = "exact"
                         ac.similarity = float(result.get("similarity") or 1.0)
@@ -107,17 +125,14 @@ class AgentOrchestrator:
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc.get("id") or name,
-                        "content": dumps_result(result)[:8000],
+                        "content": dumps_result(result),
                     })
                 continue
 
             # 无 tool_calls → 最终答案
             answer = _parse_answer(content)
-            ac.answer = answer
+            ac.answer, ac.sources = repair_answer(llm, answer, EvidenceRegistry(evidences).sources(include_text=True), ctx.question)
             ac.hit_type = ac.hit_type or "miss"
-            ac.entities = answer.get("entities") or []
-            ac.intent = "agent"
-            ac.sources = _sources_from_evidences(evidences)
             ac.review_status = "pending_review"
             ac.reasoning_trace.append({
                 "step": len(ac.reasoning_trace) + 1,
@@ -135,7 +150,7 @@ class AgentOrchestrator:
     def _run_heuristic(self, ctx: SessionContext, t0: float) -> AnswerContext:
         """无真实 LLM 时的启发式工具调度。"""
         ac = AnswerContext()
-        q = ctx.question
+        q = active_scope().question if active_scope() else ctx.question
         analysis = invoke_tool("analyze_question", {"question": q})
         ac.intent = analysis.get("intent", "")
         ac.entities = analysis.get("entities") or []
@@ -194,7 +209,7 @@ class AgentOrchestrator:
         })
         llm = get_llm()
         is_mock = isinstance(llm, MockLLM)
-        ev_lines = [f"{e.get('ref', '')}｜{e.get('label', '')} {e.get('loc', '')}｜{(e.get('text', '') or '')[:1200]}"
+        ev_lines = [f"{e.get('ref', '')}｜{e.get('label', '')} {e.get('loc', '')}｜{e.get('text', '') or ''}"
                     for e in evidences]
         history_lines = [
             f"Q: {h.get('question', '')} A: {str(h.get('answer', {}).get('what', ''))[:80]}"
@@ -204,8 +219,7 @@ class AgentOrchestrator:
             ctx.scene_code, ctx.question, ev_lines, reference, history_lines,
             mock=is_mock, evidence=evidences)
         raw = llm.chat(messages, temperature=0.2, json_mode=not is_mock)
-        ac.answer = _parse_answer(raw)
-        ac.sources = _sources_from_evidences(evidences)
+        ac.answer, ac.sources = repair_answer(llm, _parse_answer(raw), EvidenceRegistry(evidences).sources(include_text=True), ctx.question)
         ac.review_status = "pending_review"
         ac.elapsed_ms = int((time.time() - t0) * 1000)
         self._persist(ctx, ac)
@@ -226,7 +240,7 @@ class AgentOrchestrator:
 
     def _persist(self, ctx: SessionContext, ac: AnswerContext) -> None:
         entities = ac.entities or []
-        norm = normalize_question(ctx.question, ctx.scene_code, entities)
+        norm = normalize_question(active_scope().question if active_scope() else ctx.question, ctx.scene_code, entities)
         fp = compute_fingerprint(norm)
         with SessionLocal() as db:
             msg = QaMessage(
@@ -234,6 +248,8 @@ class AgentOrchestrator:
                 answer_id="", hit_type=ac.hit_type,
                 payload_json={
                     "fingerprint": fp, "question_norm": norm,
+                    "retrieval_mode": active_scope().plan.mode if active_scope() and active_scope().plan else 'business',
+                    "retrieval_diagnostics": active_scope().diagnostics if active_scope() else [],
                     "answer": ac.answer, "sources": ac.sources,
                     "reasoning_trace": ac.reasoning_trace,
                     "review_status": ac.review_status,
@@ -272,40 +288,28 @@ def _channel_of(tool_name: str) -> str:
 
 
 def _to_ev(results: list[dict], default_channel: str) -> list[dict]:
-    out = []
-    for r in results:
-        out.append({
-            "channel": r.get("channel") or default_channel,
-            "kind": r.get("kind", "chunk"),
-            "ref": r.get("ref"), "label": r.get("label"),
-            "loc": r.get("loc", ""), "obj": r.get("path"),
-            "path": r.get("path"), "text": r.get("snippet"),
-            "score": r.get("score"), "graph_id": r.get("graph_id"),
-        })
-    return out
+    return [normalize(row, default_channel) for row in results]
 
 
 def _sources_from_evidences(evidences: list[dict]) -> list[dict]:
-    out, seen = [], set()
-    for e in evidences:
-        key = (e.get("channel"), e.get("ref"), e.get("path"))
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append({
-            "no": len(out) + 1,
-            "type": e.get("channel") or "doc",
-            "ref": e.get("ref") or "",
-            "label": e.get("label") or "",
-            "loc": e.get("loc") or "",
-            "obj": e.get("obj") or e.get("path") or "",
-            "path": e.get("path") or e.get("obj") or "",
-            "snippet": (e.get("text") or "")[:160],
-            "score": e.get("score") or 0,
-        })
-        if len(out) >= 12:
-            break
-    return out
+    return EvidenceRegistry(evidences).sources()
+
+
+def _collect_evidence(result: dict, name: str, evidences: list[dict]) -> None:
+    """Assign stable citation numbers, including source previews seen by the model."""
+    rows = result.get('results') or []
+    if name == 'preview_source' and result.get('available'):
+        rows = [dict(result, channel=result.get('type', 'doc'), ref=result.get('title'),
+                     label=result.get('title'), path=result.get('path'), loc=result.get('loc', ''),
+                     snippet=result.get('content', ''))]
+    for row in rows:
+        evidence = _to_ev([row], _channel_of(name))[0]
+        row['source_no'] = EvidenceRegistry(evidences).add(evidence)
+        scope = active_scope()
+        if scope:
+            scope.learn(evidence)
+        if name == 'preview_source':
+            result['source_no'] = row['source_no']
 
 
 agent_flow = AgentOrchestrator()

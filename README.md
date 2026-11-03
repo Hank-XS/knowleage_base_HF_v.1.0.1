@@ -2,10 +2,19 @@
 
 管理 DOCX、文本型 PDF、Markdown 文档与 COBOL 代码工程，提供结构切片、代码关系图、版本对比、代码文档映射和可溯源问答。后端使用 FastAPI，前端使用 Vue3 / Vben Admin。代码工程通过 CodeGraph 解析；无大模型密钥时也可运行，并使用关键词检索展示原文依据。
 
+## 文档导航
+
+| 文档 | 内容 |
+| --- | --- |
+| [安装与启动](docs/CodeGraph安装与启动.md) | 环境安装、内网部署、模型配置、索引维护 |
+| [知识库分类与文档接入](docs/知识库分类与文档接入.md) | 上传、分类、切片、版本、图谱和问答使用 |
+| [GitHub 源码上传说明](docs/GitHub源码上传说明.md) | 源码打包、发布范围和数据排除规则 |
+| [MCP 接入](mcp/README.md) | 外部工具连接与接入配置 |
+
 ## 目录结构
 
 ```
-kb-system/
+knowledge-base/
 ├── backend/            FastAPI 后端（设计第 3-7 章的实现）
 │   ├── app/            配置/存储层/离线管线/在线问答/路由
 │   ├── data/           本地运行数据（默认空库，不附带业务素材）
@@ -68,15 +77,37 @@ KB_EMB_API_KEY=<向量服务密钥>
 KB_EMB_MODEL=embedding-3                                # 向量模型
 ```
 
-生成服务使用兼容 `/chat/completions` 的接口，向量服务使用兼容 `/embeddings` 的接口，二者可分别配置。仅填写生成模型密钥不会自动启用语义向量检索；需显式配置 `KB_EMB_BASE_URL`。未配置向量服务时使用 BM25 和精确标识符检索。旧哈希索引不会混作新语义索引，需重新导入或重建对应向量。前端「系统状态」可查看模型模式，检索流程见 [通用检索方案](docs/通用检索方案.md)。
+生成服务使用兼容 `/chat/completions` 的接口，向量服务使用兼容 `/embeddings` 的接口，二者可分别配置；也可通过 `KB_EMB_LOCAL_PATH` 使用本地语义模型。仅填写生成模型密钥不会自动启用语义检索。没有可用语义模型时使用 BM25 和精确标识符检索；语义模型需要与索引的模型空间一致。安装本地依赖及维护索引的方法见 [安装与启动](docs/CodeGraph安装与启动.md)。前端「系统状态」可查看模型模式。
 
-## 已实现能力（对应设计文档章节）
+DeepSeek 可使用以下配置（模型名以 [DeepSeek 官方文档](https://api-docs.deepseek.com/) 为准）：
 
-- **离线构建（第 3 章）**：五类素材接入适配器（错误码表/mapping/报文/文档/COBOL），parse→clean→tag→review→merge→index 六步流水线；`hf_data` 数据集清洗（L0—L4、隔离/冲突台账、tier/trust 分层）产出可导入图谱与向量；COBOL 段级解析，AI/规则打标＋治理工作台人工校对，知识版本与已验证答案失效联动
-- **知识存储（第 4 章）**：图谱 15 类节点/13 类关系（业务/数据/执行三层），向量三集合，指纹/答案/任务/审计等关系表，对象存储路径规范
-- **在线问答（第 5 章）**：精确标识符、BM25、原文上下文和图谱检索，可选语义召回与重排；默认展示简明答案，补充说明和依据按需查看；支持按账号保存历史会话及继续追问、复核答案复用与工程版本校验。工具执行记录保存在后台。
-- **工具接口层（第 6 章）**：统一注册中心，search_graph/search_doc/search_code/query_cache/save_answer 五个规范化工具，为 Agent 动态编排预留
-- **REST 接口（第 7 章）**：问答/检索/溯源/治理/接入/影响分析/代码生成/版本/工具，统一响应包与错误码，JWT＋RBAC 五角色，trace_id 与审计
+```ini
+KB_LLM_BASE_URL=https://api.deepseek.com
+KB_LLM_MODEL=deepseek-flash
+KB_LLM_API_KEY=<你的 DeepSeek API Key>
+KB_LLM_THINKING=disabled
+KB_LLM_MAX_TOKENS=4096
+```
+
+只在官方 DeepSeek 地址下，空的 `KB_LLM_API_KEY` 可回退使用 `DEEPSEEK_API_KEY`。配置从 `backend/.env` 加载，修改后重启后端。默认关闭思考以降低问答延迟；设为 `enabled` 可开启思考，Agent 会保留并回传工具调用所需的模型状态。空白或截断的模型输出会报错，避免作为正常答案保存。
+
+## Demo 问答配置
+
+聊天框保留单一输入，后台自动识别代码来源、相似实现和业务问答。普通问题走固定检索后生成答案；相似比较、影响分析、调用链等复杂问题使用 Agent。
+
+```ini
+KB_QA_STRATEGY=auto
+KB_RERANK_ENABLED=false
+```
+
+默认关闭模型重排，保留代码原文匹配、BM25、向量融合排序与引用校验。修改配置后重启后端；仅切换重排开关无需重建向量索引。前后端应一起更新，前端向 `/api/v1/qa/ask_agent` 对应的代理接口发送 `mode=auto`。
+
+## 主要功能
+
+- **资料接入**：文档解析、COBOL 工程结构识别、质量检查、用途与主题标签、版本管理；支持显式调用数据集清洗和入库工具。
+- **切片与关系**：原文结构切片、索引层父子片段、代码行为表示、CALL / COPY / MENTIONS 静态关联，以及可追溯的来源位置。
+- **在线问答**：精确标识符、BM25、语义向量和图谱补充检索；按账号保存历史会话、继续追问，支持引用检查、反馈和人工复核答案复用。
+- **维护与接口**：切片与图谱清理、版本对比、代码文档引用映射、影响分析；通过 HTTP 和 MCP 暴露工具，提供角色权限和操作审计。
 - **前端**：知识库列表、上传资料、切片查看、版本对比、代码文档映射、图谱、问答、代码树与影响分析等页面。治理与接入任务的实现保留，当前导航不展示。
 
 ## 切换到真实存储组件（可选，需 Docker）
@@ -104,7 +135,7 @@ KB_S3_SECRET_KEY=kbminioadmin
 知识库能力已拆成可调度工具（`search_doc` / `search_code` / `search_graph` / `query_cache` 等），供：
 
 1. **MCP Server**：Cursor / Claude Desktop 等 Host 的模型自动选工具；
-2. **HTTP Agent**：`POST /api/v1/qa/ask_agent`（前端问答页开关「Agent 自动调度工具」）；
+2. **HTTP 问答**：`POST /api/v1/qa/ask_agent`，默认按问题复杂度自动选择固定 Flow 或 Agent，也支持显式传入 `mode=flow` 或 `mode=agent`；
 3. **单一 Flow**：原固定流水线仍可用。
 
 ```bash
@@ -130,7 +161,7 @@ python scripts/mcp_ingest_once.py          # scan→clean→build_graph→stats
 cd backend && python -m pytest tests/ -q
 ```
 
-## 边界声明（会议决议）
+## 能力边界
 
 - 系统对 AI 解析出的业务逻辑准确性不承担责任，最终以人工复核为准（miss 答案必须复核后方可沉淀入库）
 - 不涉及将生成代码在大机上运行测试，代码生成仅输出骨架与人工校验点

@@ -18,7 +18,9 @@ LOCAL_DIRS = {'.git', '.venv', 'venv', 'node_modules', '__pycache__', '.pytest_c
               'coverage', 'test-results', 'playwright-report', 'blob-report', 'htmlcov',
               'release', 'artifacts', '.nitro', '.output', 'dev-dist'}
 ARTIFACT_SUFFIXES = {'.zip', '.tar', '.tgz', '.gz', '.7z', '.rar', '.war', '.db', '.sqlite',
-                     '.sqlite3', '.duckdb', '.pyc', '.pyo', '.log', '.pem', '.key', '.pfx', '.p12'}
+                     '.sqlite3', '.duckdb', '.pyc', '.pyo', '.log', '.pem', '.key', '.pfx', '.p12',
+                     '.safetensors', '.ckpt', '.pt', '.pth', '.onnx'}
+LOCAL_DATA_FILES = {'backend/scripts/qa_cases.json'}
 PUBLIC_ENV_NAMES = {'.env.development', '.env.production', '.env.analyze'}
 ROOT_FILES = {'.gitignore', '.gitattributes', 'README.md', 'docker-compose.yml', 'start.bat', 'LICENSE'}
 SOURCE_DIRS = {'backend', 'frontend', 'docs', 'mcp', 'hf_data'}
@@ -43,7 +45,7 @@ def exclusion(path):
     parts = PurePosixPath(path).parts
     if not parts or any(part in {'..', ''} for part in parts):
         return 'invalid-path'
-    if path.startswith(('backend/data/', 'hf_data/', 'backend/tests/fixtures/')):
+    if path in LOCAL_DATA_FILES or path.startswith(('backend/data/', 'hf_data/', 'backend/tests/fixtures/')):
         return 'data-or-fixture'
     if any(part in LOCAL_DIRS for part in parts[:-1]):
         return 'local-or-generated'

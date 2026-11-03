@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { GraphEdge, GraphNode } from '#/api/kb';
 
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue';
 
 import { Page } from '@vben/common-ui';
 import { useRoute, useRouter } from 'vue-router';
@@ -10,7 +10,6 @@ import { getProjectVersions } from '#/api/knowledge-browse';
 import { useFileScope } from '#/views/knowledge/file-scope';
 import { confirmCleanup } from '#/views/knowledge/cleanup';
 
-import G6 from '@antv/g6';
 import {
   Button as AButton,
   RadioGroup, RadioButton,
@@ -79,7 +78,7 @@ const REL_NAMES: Record<string, string> = {
   CONTAINS: '包含', IMPORTS: '引用 Copybook', REFERENCES: '引用',
   PART_OF: '属于',
   REALIZED_BY: '实现于',
-  CALLS: '调用',
+  CALLS: '调用', MENTIONS: '提及',
   READS: '读',
   WRITES: '写',
   IMPLEMENTED_BY: '实现为',
@@ -105,8 +104,8 @@ const relationOpen = ref(false); const relationDetail = ref<any>();
 const detailFilter = ref(false);
 const truncated = ref(false);
 const loading = ref(true);
-const allNodes = ref<GraphNode[]>([]);
-const allEdges = ref<GraphEdge[]>([]);
+const allNodes = shallowRef<GraphNode[]>([]);
+const allEdges = shallowRef<GraphEdge[]>([]);
 const stats = reactive({ edges: 0, nodes: 0, cross_project: 0, by_label: {} as Record<string, number> });
 
 const labelOptions = ref<{ label: string; value: string }[]>([]);
@@ -122,6 +121,42 @@ const containerRef = ref<HTMLElement>();
 const hoverTip = ref<{ name: string; type: string; x: number; y: number }>();
 let graph: any = null;
 let requestSequence = 0;
+let renderSequence = 0;
+let layoutWorker: Worker | undefined;
+const positions = new Map<string, { x: number; y: number }>();
+const layoutTasks = new Map<number, (value: any) => void>();
+let layoutRequest = 0;
+const loadedText = computed(() => loading.value || truncated.value ? `已加载 ${allNodes.value.length} / ${stats.nodes} 个节点，${allEdges.value.length} / ${stats.edges} 条关系` : `已加载全部 ${allNodes.value.length} 个节点和 ${allEdges.value.length} 条关系`);
+let labelsVisible = false;
+let nodeLabelsVisible = false;
+
+function calculatePositions(nodes: GraphNode[], edges: GraphEdge[]): Promise<Record<string, { x: number; y: number }>> {
+  const fallback = () => Object.fromEntries(nodes.map((n, i) => [n.id, { x: (i % 30) * 160, y: Math.floor(i / 30) * 100 }]));
+  return new Promise(resolve => {
+    try {
+      layoutWorker ||= new Worker(new URL('./layout.worker.ts', import.meta.url), { type: 'module' });
+      layoutWorker.onmessage = event => { const task = layoutTasks.get(event.data.request); layoutTasks.delete(event.data.request); task?.(event.data.positions); };
+      layoutWorker.onerror = () => { for (const task of layoutTasks.values()) task(undefined); layoutTasks.clear(); layoutWorker?.terminate(); layoutWorker = undefined; };
+      const request = ++layoutRequest;
+      const timer = window.setTimeout(() => { layoutTasks.delete(request); resolve(fallback()); }, 8000);
+      layoutTasks.set(request, value => { window.clearTimeout(timer); resolve(value || fallback()); });
+      layoutWorker.postMessage({ request, nodes: nodes.map(n => ({ id: n.id })), edges: edges.map(e => ({src:e.src,dst:e.dst})) });
+    } catch { resolve(fallback()); }
+  });
+}
+
+function updateRelationLabels() {
+  if (!graph) return;
+  const visible = showRelations.value && (allNodes.value.length < 250 || graph.getZoom() >= .35);
+  const nodeVisible = allNodes.value.length < 600 || graph.getZoom() >= .25;
+  if (labelsVisible === visible && nodeLabelsVisible === nodeVisible) return;
+  labelsVisible = visible;
+  graph.setAutoPaint(false);
+  for (const item of graph.getEdges()) graph.updateItem(item, { label: visible ? item.getModel().relationText : '' });
+  if (nodeLabelsVisible !== nodeVisible) for (const item of graph.getNodes()) graph.updateItem(item, { label: nodeVisible ? item.getModel().nodeText : '' });
+  nodeLabelsVisible = nodeVisible;
+  graph.setAutoPaint(true); graph.paint();
+}
 
 const tripleColumns = [
   { title: '头实体', key: 'src', width: 220 },
@@ -156,37 +191,33 @@ function currentData() {
   return { nodes, edges };
 }
 
-function renderGraph() {
+async function renderGraph() {
+  const render = ++renderSequence;
   const container = containerRef.value;
   if (!container || activeTab.value !== 'graph') return;
   const { nodes, edges } = currentData();
+  const [module, layout] = await Promise.all([import('@antv/g6'), calculatePositions(nodes, edges)]);
+  if (render !== renderSequence || !container.isConnected) return;
+  const G6 = module.default;
   hoverTip.value = undefined; container.style.cursor = '';
   const previous = graph; graph = undefined; previous?.destroy(); container.replaceChildren();
   const styles = getComputedStyle(document.documentElement);
   const background = `hsl(${styles.getPropertyValue('--background').trim() || '0 0% 100%'})`;
   const foreground = `hsl(${styles.getPropertyValue('--foreground').trim() || '215 25% 27%'})`;
   const groupedEdges = new Map<string, { source: string; target: string; relations: string[]; evidence: any[]; evidenceTotal: number; cross: boolean }>();
+  const nodeIndex = new Map(allNodes.value.map(node => [node.id, node]));
   for (const edge of edges) {
     const key = JSON.stringify([edge.src, edge.dst]);
     const group = groupedEdges.get(key) || { source: edge.src, target: edge.dst, relations: [], evidence: [], evidenceTotal: 0, cross: false };
     if (!group.relations.includes(edge.rel)) group.relations.push(edge.rel);
-    const props = (edge as any).props || {}; group.cross ||= !!props.cross_project; group.evidenceTotal += props.occurrences || 1; for (const evidence of (props.evidence_items || [props])) group.evidence.push({ ...evidence, rel:edge.rel, source:allNodes.value.find(n => n.id === edge.src), target:allNodes.value.find(n => n.id === edge.dst) });
+    const props = (edge as any).props || {}; group.cross ||= !!props.cross_project; group.evidenceTotal += props.occurrences || 1; for (const evidence of (props.evidence_items || [props]).slice(0, 20)) group.evidence.push({ ...evidence, rel:edge.rel, source:nodeIndex.get(edge.src), target:nodeIndex.get(edge.dst) });
     groupedEdges.set(key, group);
   }
   const instance = new G6.Graph({
-    container, renderer: 'svg', animate: false,
+    container, renderer: 'canvas', animate: false, pixelRatio: 1,
     height: Math.max(360, container.clientHeight || 480),
     width: container.clientWidth || 900,
-    modes: { default: ['drag-canvas', 'zoom-canvas', 'drag-node'] },
-    layout: fileId.value && nodes.length <= 150 ? { type: 'dagre', rankdir: 'LR', nodesep: 55, ranksep: 110 } : {
-      type: 'force',
-      preventOverlap: true,
-      nodeStrength: -70,
-      linkDistance: fileId.value ? 155 : 115,
-      nodeSpacing: 36,
-      collide: 22,
-      alphaDecay: 0.028,
-    },
+    modes: { default: [{ type: 'drag-canvas', enableOptimize: true }, { type: 'zoom-canvas', enableOptimize: true }, 'drag-node'] },
     defaultNode: {
       type: 'circle',
       size: 26,
@@ -202,20 +233,16 @@ function renderGraph() {
     },
   });
   graph = instance;
+  // Root viewport transforms invalidate dirty-rectangle bounds; redraw the canvas as a whole.
+  instance.get('canvas').set('localRefresh', false);
+  labelsVisible = showRelations.value && nodes.length < 250;
+  nodeLabelsVisible = nodes.length < 600;
   let userMoved = false;
   const fit = () => requestAnimationFrame(() => {
     if (graph !== instance || userMoved) return;
-    const positions = instance.getNodes().map((item: any) => item.getModel()).filter((node: any) => Number.isFinite(node.x) && Number.isFinite(node.y));
-    if (!positions.length) return;
-    // SVG screen bounds include the surrounding page offset; use layout coordinates for the viewport.
-    const minX = Math.min(...positions.map((node: any) => node.x)) - 90;
-    const maxX = Math.max(...positions.map((node: any) => node.x)) + 90;
-    const minY = Math.min(...positions.map((node: any) => node.y)) - 35;
-    const maxY = Math.max(...positions.map((node: any) => node.y)) + 65;
-    const width = instance.get('width'); const height = instance.get('height');
-    const zoom = Math.min(1, (width - 60) / (maxX - minX), (height - 60) / (maxY - minY));
-    instance.getGroup().setMatrix([zoom, 0, 0, 0, zoom, 0, width / 2 - zoom * (minX + maxX) / 2, height / 2 - zoom * (minY + maxY) / 2, 1]);
-    instance.paint();
+    if (!instance.getNodes().length) return;
+    instance.fitView(40);
+    if (instance.getZoom() > 1) { instance.zoomTo(1); instance.fitCenter(); }
   });
   instance.on('afterlayout', fit); instance.on('afterrender', fit);
   const stopLayout = () => { hoverTip.value = undefined; userMoved = true; instance.get('layoutController')?.layoutMethods?.forEach((layout: any) => layout.stop?.()); };
@@ -224,7 +251,9 @@ function renderGraph() {
   graph.data({
     nodes: nodes.map((n) => ({
       id: n.id,
-      label: view.value === 'files' ? `${n.name.split('/').pop()}${n.props.project ? '\n' + n.props.project : ''}` : n.name.length > 18 ? `${n.name.slice(0,17)}…` : n.name,
+      ...(positions.get(n.id) || layout[n.id]),
+      nodeText: view.value === 'files' ? `${n.name.split('/').pop()}${n.props.project ? '\n' + n.props.project : ''}` : n.name.length > 18 ? `${n.name.slice(0,17)}…` : n.name,
+      label: nodeLabelsVisible ? (view.value === 'files' ? `${n.name.split('/').pop()}${n.props.project ? '\n' + n.props.project : ''}` : n.name.length > 18 ? `${n.name.slice(0,17)}…` : n.name) : '',
       size: ['FunctionPoint', 'Interface'].includes(n.label) ? 36 : 26,
       style: { fill: view.value === 'files' ? projectColor(n.props.library + '/' + (n.props.project || '系统通用')) : LABEL_COLORS[n.label] ?? '#9099A6', ...((n as any).external ? { lineDash: [4, 3], stroke: foreground, lineWidth: 1.5 } : {}) },
     })),
@@ -234,17 +263,20 @@ function renderGraph() {
       target: e.target,
       type: e.source === e.target ? 'loop' : groupedEdges.has(JSON.stringify([e.target, e.source])) ? 'quadratic' : 'line',
       curveOffset: 30,
-      label: showRelations.value ? e.relations.map(relName).join(' / ') + (e.cross ? '（跨工程）' : '') : '',
+      label: labelsVisible ? e.relations.map(relName).join(' / ') + (e.cross ? '（跨工程）' : '') : '',
+      relationText: e.relations.map(relName).join(' / ') + (e.cross ? '（跨工程）' : ''),
       evidence: e.evidence, evidenceTotal: e.evidenceTotal, style: e.cross ? {stroke:'#8b5cf6',lineWidth:2,lineDash:[6,3],endArrow:true} : {endArrow:true},
     })),
   });
   graph.render();
-  container.dataset.renderer = 'svg';
+  for (const n of nodes) if (!positions.has(n.id) && layout[n.id]) positions.set(n.id, layout[n.id]!);
+  container.dataset.renderer = 'canvas';
   container.dataset.ready = 'true';
+  container.dataset.nodeCount = String(nodes.length); container.dataset.edgeCount = String(edges.length);
   container.dataset.relationLabels = JSON.stringify(edges.map(e => relName(e.rel)));
   const showNodeHint = (event: any) => {
     if (graph !== instance) return;
-    const node = allNodes.value.find(n => n.id === event.item.getID());
+    const node = nodeIndex.get(event.item.getID());
     if (!node) return;
     const rect = container.getBoundingClientRect();
     container.style.cursor = 'pointer'; instance.setItemState(event.item, 'hover', true);
@@ -260,6 +292,8 @@ function renderGraph() {
     graph?.setItemState(evt.item, 'selected', true);
     openDetail(id);
   });
+  graph.on('node:dragend', (event: any) => { const node = event.item.getModel(); positions.set(node.id, { x: node.x, y: node.y }); });
+  graph.on('viewportchange', updateRelationLabels);
 }
 
 function openDetail(id: string) {
@@ -291,7 +325,9 @@ async function load() {
   const request = ++requestSequence;
   loading.value = true;
   try {
-    const data = await graphStruct({ library: library.value, project: projectFilter.value, version: versionFilter.value, tag: tagFilter.value, detail: detailFilter.value, doc_id: fileId.value, neighbors: neighbors.value, view: view.value, cross_system: crossSystem.value });
+    positions.clear();
+    const params = { library: library.value, project: projectFilter.value, version: versionFilter.value, tag: tagFilter.value, detail: detailFilter.value, doc_id: fileId.value, neighbors: neighbors.value, view: view.value, cross_system: crossSystem.value, limit: 1000 };
+    const data = await graphStruct(params);
     if (request !== requestSequence) return;
     truncated.value = !!(data as any).truncated;
     allNodes.value = data.nodes;
@@ -307,7 +343,18 @@ async function load() {
     }));
     selectedLabels.value = labels;
     await nextTick();
-    renderGraph();
+    await renderGraph();
+    let offset = data.pagination?.next_offset;
+    while (offset != null) {
+      const page = await graphStruct({ ...params, offset });
+      if (request !== requestSequence) return;
+      if ((page as any).generation !== (data as any).generation) throw new Error('加载期间图谱已更新，请刷新以查看完整的新版本');
+      allNodes.value = [...allNodes.value, ...page.nodes]; allEdges.value = [...allEdges.value, ...page.edges];
+      offset = page.pagination?.next_offset;
+      truncated.value = offset != null;
+      await new Promise(resolve => window.setTimeout(resolve, 0));
+    }
+    if (data.pagination?.next_offset != null) { positions.clear(); buildNameIndex(); await nextTick(); await renderGraph(); }
   } catch (e: any) {
     message.error(e?.message ?? '图谱加载失败');
   } finally {
@@ -325,9 +372,8 @@ async function refresh() {
   await scope.initialize(route.query, fileFilters());
   keyword.value = '';
   if (fileId.value) detailFilter.value = true;
-  await loadVersions();
+  await Promise.all([loadVersions(), load()]);
   if (fileId.value) await scope.loadFiles(fileFilters());
-  await load();
 }
 function fileFilters() { return { version: versionFilter.value, history: !!versionFilter.value, status: 'published' }; }
 async function loadVersions() { const rows = await getProjectVersions(library.value, projectFilter.value); if (file.value && fileId.value) versionFilter.value = rows.find(v => v.id === file.value?.project_job)?.version || file.value.version; versionOptions.value = [...new Set([...rows.map(v => v.version), ...(file.value && fileId.value ? [versionFilter.value] : [])])].map(version => ({ label: version, value: version })); }
@@ -349,6 +395,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize);
   const previous = graph; graph = undefined; previous?.destroy();
   requestSequence++;
+  renderSequence++; layoutWorker?.terminate(); layoutTasks.clear();
 });
 </script>
 
@@ -361,9 +408,9 @@ onBeforeUnmount(() => {
         <label>版本<ASelect :value="versionFilter || undefined" @update:value="versionFilter = String($event || '')" allow-clear placeholder="当前成功版本" :options="versionOptions" @change="versionChanged" /></label>
         <label class="file-filter">单独文件<ASelect :value="fileId || undefined" @update:value="fileId = String($event || '')" allow-clear show-search :filter-option="false" :options="files" :loading="scope.loading.value" placeholder="全部文件，可搜索并选择关联中心" @search="scope.searchFiles($event, fileFilters())" @popup-scroll="scope.loadMore($event, fileFilters())" @change="selectFile" /></label>
         <label>主题标签<ASelect :value="tagFilter || undefined" @update:value="tagFilter = String($event || '')" allow-clear placeholder="全部主题" :options="catalog.tags.map(t => ({ label:t.value, value:t.value }))" @change="tagChanged" /></label>
-      </div><div class="scope-actions"><RadioGroup v-model:value="view" button-style="solid" @change="load"><RadioButton value="files">文件关联</RadioButton><RadioButton value="structure">结构细节</RadioButton></RadioGroup><ACheckbox v-if="view === 'structure'" v-model:checked="detailFilter" @change="load">展开段落和字段</ACheckbox><ACheckbox v-model:checked="neighbors" :disabled="!fileId && !projectFilter" @change="load">包含关联文件</ACheckbox><ACheckbox v-model:checked="crossSystem" @change="load">跨系统静态关联</ACheckbox><ACheckbox v-model:checked="showRelations" @change="renderGraph">显示关系文字</ACheckbox><AButton @click="load">刷新</AButton><AButton danger :disabled="!canClean" @click="cleanup">{{ fileId ? '清理文件图谱' : '清理工程图谱' }}</AButton></div>
+      </div><div class="scope-actions"><RadioGroup v-model:value="view" button-style="solid" @change="load"><RadioButton value="files">文件关联</RadioButton><RadioButton value="structure">结构细节</RadioButton></RadioGroup><ACheckbox v-if="view === 'structure'" v-model:checked="detailFilter" @change="load">展开段落和字段</ACheckbox><ACheckbox v-model:checked="neighbors" :disabled="!fileId && !projectFilter" @change="load">包含关联文件</ACheckbox><ACheckbox v-model:checked="crossSystem" @change="load">跨系统静态关联</ACheckbox><ACheckbox v-model:checked="showRelations" @change="updateRelationLabels">显示关系文字（大图放大后显示）</ACheckbox><AButton @click="load">刷新</AButton><AButton danger :disabled="!canClean" @click="cleanup">{{ fileId ? '清理文件图谱' : '清理工程图谱' }}</AButton></div>
       </Card>
-      <AAlert v-if="truncated" type="warning" show-icon message="当前范围较大，仅展示部分节点与关系，请按工程或单独文件缩小范围。" style="margin-bottom:16px" />
+      <AAlert v-if="truncated && !loading" type="warning" show-icon message="加载未完成，当前显示部分数据，请刷新重试。" style="margin-bottom:16px" />
       <Card :body-style="{ padding: '14px 20px' }">
         <div class="g-head">
           <div>
@@ -392,17 +439,17 @@ onBeforeUnmount(() => {
               @press-enter="renderGraph"
               @change="() => !keyword && renderGraph()"
             />
-            <AButton @click="renderGraph">重绘</AButton>
+            <AButton @click="graph?.fitView(40)">适应全图</AButton>
           </div>
         </div>
-        <details class="type-help"><summary>实体类型如何区分？</summary><p>代码文件对应物理文件；程序对应 PROGRAM-ID；段落 / SECTION 和字段是文件内的结构。Copybook 引用按解析出的引用节点计数，同一个 Copybook 可以出现多次，因此不等于实际 Copybook 文件数。主题标签是上传时填写的业务分类。</p></details>
+        <p class="file-caption" role="status">{{ loadedText }}</p><details class="type-help"><summary>实体类型如何区分？</summary><p>代码文件对应物理文件；程序对应 PROGRAM-ID；段落 / SECTION 和字段是文件内的结构。Copybook 引用按解析出的引用节点计数，同一个 Copybook 可以出现多次，因此不等于实际 Copybook 文件数。主题标签是上传时填写的业务分类。</p></details>
         <p v-if="fileId" class="file-caption">当前文件：{{ file?.name }}。虚线边框节点来自关联文件，可点击节点继续查看。</p>
       </Card>
 
       <p class="file-caption">紫色虚线表示跨工程静态匹配。仅使用字面量 CALL、COPY 和唯一同名定义；同名冲突或动态调用不会自动连线。新上传成功后自动使用当前有效版本重新匹配。</p><div v-if="view === 'files'" class="g-legend"><span v-for="key in projectLegend" :key="key" class="lg-item"><i class="lg-dot" :style="{background:projectColor(key)}"></i>{{ legendName(key) }}</span></div><Card class="mt" :body-style="{ padding: '12px' }">
         <ATabs v-model:active-key="activeTab">
           <ATabPane key="graph" tab="图谱视图">
-            <ASpin :spinning="loading">
+            <ASpin :spinning="loading && !allNodes.length">
               <div class="graph-frame"><div ref="containerRef" class="g-canvas"></div><div v-if="hoverTip" role="tooltip" class="node-hint" :style="{left:hoverTip.x+'px',top:hoverTip.y+'px'}"><strong>{{ hoverTip.name }}</strong><span>{{ hoverTip.type }} · 点击查看详细信息</span></div><AEmpty v-if="!loading && !allNodes.length" class="graph-empty" description="当前范围没有图谱数据，可切换文件或重新上传解析" /></div>
               <div class="g-legend">
                 <span

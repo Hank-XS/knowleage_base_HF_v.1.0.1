@@ -33,6 +33,18 @@ def lookup(fingerprint: str, question: str, scene_code: str) -> dict:
         reusable = current - {job.id for job in db.scalars(select(IngestJob).where(IngestJob.id.in_(current)))
                               if job.options_json.get('cleaned_chunks') or job.options_json.get('cleaned_graph')}
         def current_sources(row):
+            from .scope import active_scope
+            scope = active_scope()
+            if scope and any(not scope.allows(s.get('path') or s.get('obj') or '') for s in (row.sources_json or [])):
+                return False
+            from ..db import KbDocument
+            managed = {s.get('path') or s.get('obj') for s in (row.sources_json or [])
+                       if str(s.get('path') or s.get('obj') or '').startswith('kb-managed/documents/')}
+            if managed:
+                active_paths = set(db.scalars(select(KbDocument.source_path).where(KbDocument.is_current == 1,
+                    KbDocument.vectorized == 1)).all())
+                if not managed <= active_paths:
+                    return False
             jobs = {match for source in (row.sources_json or []) for value in
                     (source.get('path', ''), source.get('obj', ''), source.get('ref', ''))
                     for match in re.findall(r'(?:projects/|project/)([0-9a-f]{32})(?:/|$)', value or '')}
@@ -55,12 +67,21 @@ def lookup(fingerprint: str, question: str, scene_code: str) -> dict:
         for row in rows:
             if row.status != "verified":
                 continue
-            rv = json.loads(row.question_emb or "[]")
+            encoded = json.loads(row.question_emb or "[]")
+            if isinstance(encoded, dict):
+                if encoded.get('embedding_space') != emb.name:
+                    continue
+                rv = encoded.get('vector', [])
+            else:
+                # Legacy unversioned vectors are never compared with new semantic spaces.
+                if not emb.name.startswith('hash:'):
+                    continue
+                rv = encoded
             sim = _cos(qv, rv)
             if sim > best_sim:
                 best, best_sim = row, sim
         route = route_by_similarity(best_sim)
-        if route == "similar" and best is not None:
+        if route in {"exact", "similar"} and best is not None:
             return {"route": "similar", "answer": _payload(best), "similarity": round(best_sim, 4)}
         return {"route": "miss", "similarity": round(best_sim, 4)}
 
@@ -96,7 +117,7 @@ def save_verified(*, fingerprint: str, question_norm: str, scene_code: str,
         row.status = "verified"
         row.verified_by = verified_by
         row.kb_version = kb_version
-        row.question_emb = json.dumps(qv)
+        row.question_emb = json.dumps(dict(embedding_space=emb.name, vector=qv))
         db.commit()
         return row.answer_id
 

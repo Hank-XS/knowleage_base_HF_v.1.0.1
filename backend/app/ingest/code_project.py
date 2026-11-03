@@ -86,16 +86,25 @@ def inspect_archive(content: bytes, encoding: str = 'utf-8') -> tuple[dict[str, 
                 try:
                     source = raw.decode('utf-8-sig' if encoding == 'utf-8' else encoding)
                 except UnicodeDecodeError as exc:
-                    raise ValueError(f'{normalized} 不是所选编码，请检查源码编码') from exc
+                    skipped.append(dict(path=normalized, reason='不是所选编码，请检查源码编码', quarantined=True))
+                    continue
                 if '\x00' in source:
-                    raise ValueError(f'{normalized} 包含二进制内容')
+                    skipped.append(dict(path=normalized, reason='包含二进制内容', quarantined=True))
+                    continue
                 if len(source.encode('utf-8')) > MAX_SOURCE:
                     raise ValueError(f'{normalized} 转为 UTF-8 后超过 1 MB')
+                from .quality import prepare_text
+                try:
+                    source, quality = prepare_text(source, code=True)
+                except ValueError as exc:
+                    skipped.append(dict(path=normalized, reason=str(exc), quarantined=True))
+                    continue
                 sources[normalized] = source
     except (zipfile.BadZipFile, NotImplementedError, RuntimeError) as exc:
         raise ValueError('ZIP 损坏或使用了不支持的压缩方式') from exc
     if not sources:
-        raise ValueError('ZIP 中未找到 .cbl / .cob / .cobol / .cpy 文件')
+        reasons = '；'.join(f"{item['path']}: {item['reason']}" for item in skipped[:3])
+        raise ValueError('ZIP 中未找到可用的 .cbl / .cob / .cobol / .cpy 文件' + ('；' + reasons if reasons else ''))
     return sources, skipped
 
 
@@ -107,6 +116,15 @@ def create_project(content: bytes, filename: str, project: str, version: str,
     from .documents import normalize_tags
     tags = normalize_tags(tags or [])
     sources, skipped = inspect_archive(content, encoding)
+    from .quality import prepare_text
+    quality_files, hashes = {}, {}
+    for path, source in sources.items():
+        _, report = prepare_text(source, code=True)
+        if report['sha256'] in hashes:
+            report['duplicate_of'] = hashes[report['sha256']]
+            report['warnings'].append('与另一文件内容相同，保留各自路径与引用身份')
+        hashes.setdefault(report['sha256'], path)
+        quality_files[path] = report
     job_id = uuid.uuid4().hex
     root = snapshot_root(job_id)
     root.mkdir(parents=True)
@@ -118,7 +136,8 @@ def create_project(content: bytes, filename: str, project: str, version: str,
     scope = hashlib.sha256(f'{library}\0{project}\0{version}'.encode()).hexdigest()
     options = dict(project=project, version=version, library=library, encoding=encoding,
                    author=author, filename=Path(filename).name, scope=scope, active=False,
-                   files=list(sources), skipped=skipped, tags=tags, engine='CodeGraph', model_used=False)
+                   files=list(sources), skipped=skipped, tags=tags, engine='CodeGraph', model_used=False,
+                   quality_report=dict(files=quality_files, accepted=len(sources), quarantined=sum(bool(s.get('quarantined')) for s in skipped)))
     with SessionLocal() as db:
         db.add(IngestJob(id=job_id, source_type='code_project', status='queued',
                         object_keys=[f'kb-raw/projects/{job_id}/upload.zip'], options_json=options,
@@ -281,6 +300,18 @@ def publish(job_id: str, result: dict, options: dict) -> None:
                   scope=options['scope'], lang='COBOL', kb_version=options['version'], tier='B', trust=0.85,
                   library=options['library'], tags=options.get('tags', []), purpose='source')
     embedder = get_embedder()
+    from ..knowledge.representations import encode_many, file_overview
+    parents = []
+    overview_files = set()
+    for ch in result['chunks']:
+        meta = {**common, 'text':ch['text'], 'code_unit':ch['title'], 'title':ch['title'],
+                'obj':ch['node_id'], 'source_path':f'kb-raw/projects/{job_id}/source/{ch["path"]}',
+                'loc':f'L{ch["start_line"]}-L{ch["end_line"]}', 'channel':'code'}
+        if ch['path'] not in overview_files:
+            meta['file_overview'] = file_overview((root/'source'/ch['path']).read_text('utf-8'),meta['source_path'])
+            overview_files.add(ch['path'])
+        parents.append((ch['id'], ch['text'], meta))
+    prepared = encode_many(parents, embedder)
     node_kinds = {n['id']: n['props']['kind'] for n in result['nodes']}
     with SessionLocal() as db:
         previous_ids = [j.id for j in db.scalars(select(IngestJob).where(
@@ -290,18 +321,15 @@ def publish(job_id: str, result: dict, options: dict) -> None:
     old_nodes = [n for n in graph_store.dump()['nodes'] if n['props'].get('project_job') in previous_ids]
     old_ids = {n['id'] for n in old_nodes}
     old_edges = [e for e in graph_store.dump()['edges'] if e['src'] in old_ids or e['dst'] in old_ids]
-    old_vectors = [c for c in vector_store._data['kb_code_chunk']
+    old_vectors = [c for c in vector_store.export('kb_code_chunk')
                    if c['meta'].get('project_job') in previous_ids]
     try:
         for node in result['nodes']:
             graph_store.upsert_node(node['id'], node['label'], node['props'])
         for edge in result['edges']:
             graph_store.upsert_edge(edge['src'], edge['rel'], edge['dst'], edge['props'])
-        for ch in result['chunks']:
-            meta = {**common, 'text': ch['text'], 'code_unit': ch['title'], 'title': ch['title'],
-                    'obj': ch['node_id'], 'source_path': f'kb-raw/projects/{job_id}/source/{ch["path"]}',
-                    'loc': f'L{ch["start_line"]}-L{ch["end_line"]}', 'embedding': embedder.name}
-            vector_store.upsert('kb_code_chunk', ch['id'], embedder.embed([ch['text']])[0], meta)
+        for ch, (embedding, meta) in zip(result['chunks'], prepared):
+            vector_store.upsert('kb_code_chunk', ch['id'], embedding, meta)
         with SessionLocal() as db:
             if not db.get(KbLibrary, options['library']):
                 db.add(KbLibrary(key=options['library'], title=options['library']))
@@ -317,6 +345,7 @@ def publish(job_id: str, result: dict, options: dict) -> None:
                 db.add(doc)
                 db.flush()
                 db.add(KbDocVersion(doc_id=doc.id, version=options['version'], content=text,
+                                    meta_json={'quality': options.get('quality_report', {}).get('files', {}).get(path, {})},
                                     created_by=options['author']))
                 for i, ch in enumerate(c for c in result['chunks'] if c['path'] == path):
                     db.add(KbDocChunk(id=ch['id'], doc_id=doc.id, version=options['version'], chunk_index=i,

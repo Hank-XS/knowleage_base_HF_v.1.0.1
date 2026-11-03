@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
@@ -104,7 +105,7 @@ def ask(body: AskIn, request: Request, user: User = Depends(current_user)):
     if not body.question.strip():
         raise KbError("40001", "question 不能为空")
     _owned_session(body.session_id, user.username)
-    ctx = SessionContext(session_id=body.session_id, user=user.username,
+    ctx = SessionContext(session_id=body.session_id, user=user.username, role=user.role,
                          question=body.question.strip(), history=_history(body.session_id))
     ac = flow.run(ctx)
     audit(request, user.username, "qa_ask", obj=body.question[:100],
@@ -115,24 +116,24 @@ def ask(body: AskIn, request: Request, user: User = Depends(current_user)):
 class AskAgentIn(BaseModel):
     session_id: str
     question: str
-    mode: str = "agent"  # agent | flow
+    mode: Literal['auto', 'agent', 'flow'] = 'auto'
 
 
 @router.post("/ask_agent")
 def ask_agent(body: AskAgentIn, request: Request, user: User = Depends(current_user)):
-    """Agent 模式：由模型/启发式自动调度 search_doc/search_code/search_graph 等工具。"""
+    """按问题复杂度选择 Flow/Agent，同时兼容显式指定编排方式。"""
     if not body.question.strip():
         raise KbError("40001", "question 不能为空")
     _owned_session(body.session_id, user.username)
-    ctx = SessionContext(session_id=body.session_id, user=user.username,
+    ctx = SessionContext(session_id=body.session_id, user=user.username, role=user.role,
                          question=body.question.strip(), history=_history(body.session_id))
-    if body.mode == "flow":
+    from ..qa.routing import choose_orchestrator
+    orch = choose_orchestrator(ctx.question, ctx.history, body.mode)
+    if orch == 'flow':
         ac = flow.run(ctx)
-        orch = "flow"
     else:
         from ..tools.agent import agent_flow
         ac = agent_flow.run(ctx)
-        orch = "agent"
     audit(request, user.username, "qa_ask_agent", obj=body.question[:100],
           detail={"hit_type": ac.hit_type, "answer_id": ac.answer_id, "orchestrator": orch})
     data = _payload(ac)
@@ -152,7 +153,7 @@ def followup(body: FollowupIn, request: Request, user: User = Depends(current_us
     if not body.question.strip():
         raise KbError('40001', 'question 不能为空')
     _owned_session(body.session_id, user.username)
-    ctx = SessionContext(session_id=body.session_id, user=user.username,
+    ctx = SessionContext(session_id=body.session_id, user=user.username, role=user.role,
                          question=body.question.strip(), history=_history(body.session_id))
     ac = flow.run(ctx)
     audit(request, user.username, "qa_followup", obj=body.question[:100],
@@ -227,6 +228,10 @@ def source_preview(
         path=path, source_type=type, ref=ref, loc=loc,
         snippet=snippet, obj=obj, label=label,
     )
+    from ..knowledge.access import denied_paths
+    denied = denied_paths(user.username, user.role)
+    if doc.get('path') in denied or path in denied or obj in denied:
+        raise KbError('40301', '该资料不可访问')
     if not doc.get("available") and not doc.get("content"):
         raise KbError("40401", "未找到依据文档")
     return ok(doc, request)
@@ -236,6 +241,30 @@ class ReviewIn(BaseModel):
     verdict: str  # approved / rejected
     corrected_answer: dict | None = None
     fingerprint_scope: str = "scene:ATM"
+
+
+class FeedbackIn(BaseModel):
+    kind: str
+    comment: str = ''
+
+
+@router.post('/answers/{answer_id}/feedback')
+def answer_feedback(answer_id: str, body: FeedbackIn, request: Request, user: User = Depends(current_user)):
+    if body.kind not in {'helpful', 'missing', 'wrong_source', 'wrong_answer'} or len(body.comment) > 1000:
+        raise KbError('40001', '请选择有效的反馈类型，说明最多1000字')
+    with SessionLocal() as db:
+        row = db.get(QaMessage, answer_id)
+        if row is None:
+            raise KbError('40401', '答案不存在')
+        _owned_session(row.session_id, user.username)
+        payload = dict(row.payload_json or {})
+        feedback = [f for f in payload.get('feedback', []) if f.get('actor') != user.username]
+        feedback.append(dict(actor=user.username, kind=body.kind, comment=body.comment.strip(), status='pending_review'))
+        payload['feedback'] = feedback
+        row.payload_json = payload
+        db.commit()
+    audit(request, user.username, 'qa_feedback', answer_id, detail={'kind':body.kind})
+    return ok({'saved':True, 'status':'pending_review'}, request)
 
 
 @router.post("/answers/{answer_id}/review")

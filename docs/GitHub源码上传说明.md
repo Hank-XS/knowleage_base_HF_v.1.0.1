@@ -9,6 +9,8 @@
 - `backend/data/`、`hf_data/` 的实际内容，分别只保留目录说明 `README.md`。
 - 上传的代码 ZIP 和原文件、Word/PDF/Markdown 资料，以及由它们生成的数据库、历史问答、切片、图谱、向量索引和 CodeGraph 索引。
 - `backend/.local/` 等本地验收脚本输出、截图、结果 JSON、日志及测试报告，`backend/tests/fixtures/` 的落地样本。
+- 本机业务评测问题集（包括 `backend/scripts/qa_cases.json`）；评测工具要求使用者显式提供 `--cases`，源码不携带固定业务题。
+- 本地模型权重（如 `.safetensors`、`.pt`、`.pth`、`.ckpt`、`.onnx`），需在部署机器单独准备。
 - Python / Node 依赖、构建后的 `dist` 和压缩包、缓存和进程记录。
 - 本机 `.env`、私钥和实际服务密钥；原始 Word 项目资料。维护后的说明放在 `docs/`。
 
@@ -29,6 +31,8 @@
 macOS/Linux 将 Python 命令换成 `backend/.venv/bin/python`。脚本按路径策略二次排除已跟踪的数据和产物，检查常见密钥格式，遇到疑似实际密钥时只报告位置并停止，不回显密钥。ZIP 创建后校验 CRC 和文件范围。报告仅包含路径、大小、摘要及检查结果，不包含资料正文。此检查覆盖常见泄漏格式，不代替对业务内容的人工审查。
 
 源码包不包含 `.git`。新仓库可以解压后初始化 Git，避免带入旧仓库历史；不要把本地整个父目录、依赖环境或测试 ZIP 一起上传。正常安装步骤见 [安装与启动](CodeGraph安装与启动.md)。启动新安装会创建空知识库。
+
+当前目标仓库为 `https://github.com/Hank-XS/knowleage_base_HF_v.1.0.1.git`，目标分支为 `feat/knowledge-platform-source-20261102`。ZIP 内的 `knowledge-base/` 是项目根目录，上传到现有仓库时使用该目录内的文件，避免额外嵌套一层目录；不要直接将 ZIP 作为源码文件提交。
 
 ## 在当前仓库提交
 
